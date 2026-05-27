@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Notice, Setting, Platform } from "obsidian";
+import { App, PluginSettingTab, Notice, Setting, Platform, requestUrl } from "obsidian";
 import { createRoot } from "react-dom/client";
 import * as React from "react";
 
@@ -317,11 +317,13 @@ export class SettingTab extends PluginSettingTab {
                 const user = this.plugin.settings.videoWebdavUser ?? ""
                 const pass = this.plugin.settings.videoWebdavPassword ?? ""
                 const auth = `Basic ${btoa(unescape(encodeURIComponent(`${user}:${pass}`)))}`
-                const resp = await fetch(url, {
+                const resp = await requestUrl({
+                  url,
                   method: "PROPFIND",
                   headers: { Authorization: auth, Depth: "0" },
+                  throw: false,
                 })
-                if (resp.ok || resp.status === 207) {
+                if (resp.status === 207 || resp.status === 200) {
                   new Notice(`✅ ${$("WebDAV 连接成功")}`)
                 } else {
                   new Notice(`❌ ${$("WebDAV 连接失败")}: HTTP ${resp.status}`)

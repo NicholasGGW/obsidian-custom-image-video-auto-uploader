@@ -597,6 +597,8 @@ export async function generateVideoPoster(file: TFile, plugin: CustomImageAutoUp
  * WebDAV PUT 文件上传辅助函数
  * 按 YYYYMM/ 子目录组织，兼容 OpenList/AList 公共访问 URL 自动推导
  * 使用独立的用户名/密码进行 Basic Auth，与图片 API Token 完全分离
+ * 使用 Obsidian requestUrl 而非 fetch，走 Electron native HTTP，
+ * 避免 4xx 响应在浏览器 DevTools 控制台产生红色错误日志
  */
 async function webdavUploadFile(
   buffer: ArrayBuffer,
@@ -616,36 +618,43 @@ async function webdavUploadFile(
   // Basic Auth（支持 Unicode 用户名/密码）
   const basicAuth = `Basic ${btoa(unescape(encodeURIComponent(`${webdavUser}:${webdavPassword}`)))}`
 
-  // MKCOL 不需要 Content-Type，只需要认证头
+  // MKCOL：用 requestUrl 发请求，Electron native HTTP 不会在控制台留下 4xx 错误日志
+  // 201 = 目录创建成功；405 = 目录已存在；均视为正常，继续上传
   try {
-    await fetch(`${base}/${dateFolder}`, {
+    await requestUrl({
+      url: `${base}/${dateFolder}`,
       method: "MKCOL",
       headers: { Authorization: basicAuth },
+      throw: false,
     })
   } catch {
-    // 目录已存在（405）或其他忽略情况
+    // 网络异常时忽略，PUT 会给出更明确的错误
   }
 
   const remotePath = `${dateFolder}/${fileName}`
   const putUrl = `${base}/${remotePath}`
   const publicUrl = `${derivedPublic}/${remotePath}`
 
-  let resp: Response
+  // PUT：上传文件体
+  let status: number
   try {
-    resp = await fetch(putUrl, {
+    const resp = await requestUrl({
+      url: putUrl,
       method: "PUT",
       headers: { Authorization: basicAuth, "Content-Type": mimeType },
       body: buffer,
+      throw: false,
     })
+    status = resp.status
   } catch (e) {
     return { error: $("网络错误,请检查网络是否通畅") + ": " + (e as Error).message }
   }
 
   // 201 Created / 204 No Content / 200 OK 均视为成功
-  if (resp.status === 200 || resp.status === 201 || resp.status === 204) {
+  if (status === 200 || status === 201 || status === 204) {
     return { url: publicUrl }
   }
-  return { error: `${$("WebDAV 上传失败")}: HTTP ${resp.status}` }
+  return { error: `${$("WebDAV 上传失败")}: HTTP ${status}` }
 }
 
 export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader): Promise<VideoUploadResult> {
