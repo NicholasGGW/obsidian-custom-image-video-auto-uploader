@@ -1,8 +1,8 @@
 import { Menu, Plugin, TFile, Notice, debounce } from "obsidian";
 
-import { imageDown, imageUpload, statusCheck, replaceInText, replaceInTextForUpload, replaceInTextForDownload, hasExcludeDomain, autoAddExcludeDomain, metadataCacheHandle, generateRandomString, showTaskNotice, showErrorNotice, getAttachmentUploadPath, setMenu } from "./lib/utils";
+import { imageDown, imageUpload, statusCheck, replaceInText, replaceInTextForUpload, replaceInTextForDownload, replaceInTextForVideoUpload, hasExcludeDomain, autoAddExcludeDomain, metadataCacheHandle, generateRandomString, showTaskNotice, showErrorNotice, getAttachmentUploadPath, setMenu, videoUpload } from "./lib/utils";
 import { SettingTab, PluginSettings, DEFAULT_SETTINGS } from "./setting";
-import { DownTask, UploadTask } from "./lib/interface";
+import { DownTask, UploadTask, VideoUploadTask } from "./lib/interface";
 import { $ } from "./lang/lang";
 
 
@@ -12,6 +12,8 @@ import { $ } from "./lang/lang";
 const wikilinkImageRegex = /!\[\[([^\]|]*)\|?([^\]]*)\]\]/g
 // Markdown format: ![alt](url)
 const markdownImageRegex = /!\[([^\]]*)\]\((.*?)\s*("(?:.*[^"])")?\s*\)/g
+// Video wiki link format: ![[video.mp4]] or ![[video.mov|alt]]
+const wikilinkVideoRegex = /!\[\[([^\]|]*\.(?:mp4|mov))\|?([^\]]*)\]\]/gi
 
 
 export default class CustomImageAutoUploader extends Plugin {
@@ -89,6 +91,24 @@ export default class CustomImageAutoUploader extends Plugin {
       },
     })
     this.addCommand({
+      id: "upload-current-videos",
+      name: $("上传当前笔记视频"),
+      callback: async () => {
+        this.resetStatus("upload", true)
+        await this.ContentUploadVideo()
+        showTaskNotice(this, "upload")
+      },
+    })
+    this.addCommand({
+      id: "upload-vault-videos",
+      name: $("上传全库视频"),
+      callback: async () => {
+        this.resetStatus("upload", true)
+        await this.VaultUploadVideo()
+        showTaskNotice(this, "upload")
+      },
+    })
+    this.addCommand({
       id: "down-vault-images",
       name: $("下载全库图片"),
       callback: async () => {
@@ -140,6 +160,7 @@ export default class CustomImageAutoUploader extends Plugin {
     if (this.settings.isAutoUpload || isManual) {
       await sleep(this.settings.afterUploadTimeout)
       await this.ContentUploadImage()
+      await this.ContentUploadVideo()
     }
   }
 
@@ -319,6 +340,102 @@ export default class CustomImageAutoUploader extends Plugin {
       this.app.workspace.activeEditor?.editor?.setValue(filePropertyContent + fileContent)
       await this.app.workspace.activeEditor?.editor?.setCursor(cursor)
 
+      this.fromPluginSet = false
+    }
+  }
+
+  /**
+   * 上传当前笔记中所有本地视频文件（mp4 / mov）
+   * 超出大小限制的视频会被跳过，并统一显示一条错误提示
+   */
+  async ContentUploadVideo() {
+    if (!this.app.workspace.activeEditor || !this.app.workspace.activeEditor.editor) return
+
+    let cursor = this.app.workspace.activeEditor.editor.getCursor()
+    let fileFullContent = this.app.workspace.activeEditor.editor.getValue() || ""
+    if (!fileFullContent) return
+
+    let filePropertyContent = ""
+    let fileContent = ""
+
+    const propertyMatch = fileFullContent.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?/g)
+    if (propertyMatch) {
+      fileContent = fileFullContent.substring(propertyMatch[0].length)
+      filePropertyContent = propertyMatch[0]
+    } else {
+      fileContent = fileFullContent
+    }
+
+    const uploadTasks: VideoUploadTask[] = []
+    const matches = fileContent.matchAll(wikilinkVideoRegex)
+    const uniqueTask = new Set<string>()
+
+    for (const match of matches) {
+      if (uniqueTask.has(match[0])) continue
+      uniqueTask.add(match[0])
+
+      if (/^http/.test(match[1])) continue
+
+      const readfile = await getAttachmentUploadPath(match[1], this)
+      if (!readfile) continue
+
+      const videoExt = readfile.extension.toLowerCase()
+      const videoAlt = match[2] ? match[2] : match[1]
+      uploadTasks.push({
+        matchText: match[0],
+        videoAlt,
+        videoFile: readfile,
+        videoExt,
+      })
+      this.uploadStatus.total++
+      statusCheck(this)
+    }
+
+    let isModify = false
+    const sizeExceededFiles: { name: string; sizeMB: number }[] = []
+
+    const uploadResults = await Promise.all(
+      uploadTasks.map(async (task) => {
+        const result = await videoUpload(task.videoFile, this)
+        return { task, result }
+      })
+    )
+
+    for (const { task, result } of uploadResults) {
+      if (result.err) {
+        if (result.sizeExceeded && result.fileName !== undefined && result.fileSize !== undefined) {
+          sizeExceededFiles.push({ name: result.fileName, sizeMB: result.fileSize })
+        } else {
+          showErrorNotice(result.msg)
+        }
+      } else if (result.videoUrl) {
+        isModify = true
+        this.uploadStatus.current++
+        statusCheck(this)
+        fileContent = replaceInTextForVideoUpload(
+          fileContent,
+          task.matchText,
+          result.videoUrl,
+          result.posterUrl ?? "",
+          task.videoExt
+        )
+      }
+    }
+
+    // 汇总超大视频的错误提示
+    if (sizeExceededFiles.length > 0) {
+      const fileList = sizeExceededFiles
+        .map((f) => `• ${f.name} (${f.sizeMB.toFixed(2)} MB)`)
+        .join("\n")
+      showErrorNotice(
+        `${sizeExceededFiles.length} 个视频超出 ${this.settings.maxVideoSizeMB} MB 限制：\n${fileList}`
+      )
+    }
+
+    if (isModify) {
+      this.fromPluginSet = true
+      this.app.workspace.activeEditor?.editor?.setValue(filePropertyContent + fileContent)
+      await this.app.workspace.activeEditor?.editor?.setCursor(cursor)
       this.fromPluginSet = false
     }
   }
@@ -600,6 +717,99 @@ export default class CustomImageAutoUploader extends Plugin {
         if (isModify) {
           await this.app.vault.modify(item.file, fileContent)
         }
+      }
+    } finally {
+      setTimeout(() => {
+        this.fromPluginSet = false
+      }, 1500)
+    }
+  }
+
+  /**
+   * 扫描全库 Markdown 文件并上传所有本地视频（mp4 / mov）
+   */
+  async VaultUploadVideo() {
+    this.fromPluginSet = true
+    try {
+      const files = this.app.vault.getMarkdownFiles()
+      this.uploadStatus.total = 0
+      this.uploadStatus.current = 0
+
+      const tasks: { file: TFile; uploadTasks: VideoUploadTask[] }[] = []
+
+      for (const file of files) {
+        const content = await this.app.vault.read(file)
+        const fileTasks: VideoUploadTask[] = []
+        const matches = content.matchAll(wikilinkVideoRegex)
+
+        for (const match of matches) {
+          if (/^http/.test(match[1])) continue
+
+          const readfile = await getAttachmentUploadPath(match[1], this)
+          if (!readfile) continue
+
+          const videoExt = readfile.extension.toLowerCase()
+          const videoAlt = match[2] ? match[2] : match[1]
+          fileTasks.push({
+            matchText: match[0],
+            videoAlt,
+            videoFile: readfile,
+            videoExt,
+          })
+          this.uploadStatus.total++
+          statusCheck(this)
+        }
+        if (fileTasks.length > 0) {
+          tasks.push({ file, uploadTasks: fileTasks })
+        }
+      }
+
+      const globalSizeExceeded: { name: string; sizeMB: number }[] = []
+
+      for (const item of tasks) {
+        let fileContent = await this.app.vault.read(item.file)
+        let isModify = false
+
+        const uploadResults = await Promise.all(
+          item.uploadTasks.map(async (task) => {
+            const result = await videoUpload(task.videoFile, this)
+            return { task, result }
+          })
+        )
+
+        for (const { task, result } of uploadResults) {
+          if (result.err) {
+            if (result.sizeExceeded && result.fileName !== undefined && result.fileSize !== undefined) {
+              globalSizeExceeded.push({ name: result.fileName, sizeMB: result.fileSize })
+            } else {
+              showErrorNotice(result.msg)
+            }
+          } else if (result.videoUrl) {
+            isModify = true
+            this.uploadStatus.current++
+            statusCheck(this)
+            fileContent = replaceInTextForVideoUpload(
+              fileContent,
+              task.matchText,
+              result.videoUrl,
+              result.posterUrl ?? "",
+              task.videoExt
+            )
+          }
+        }
+
+        if (isModify) {
+          await this.app.vault.modify(item.file, fileContent)
+        }
+      }
+
+      if (globalSizeExceeded.length > 0) {
+        const fileList = globalSizeExceeded
+          .map((f) => `• ${f.name} (${f.sizeMB.toFixed(2)} MB)`)
+          .join("\n")
+        showErrorNotice(
+          `${globalSizeExceeded.length} 个视频超出 ${this.settings.maxVideoSizeMB} MB 限制：\n${fileList}`
+        )
       }
     } finally {
       setTimeout(() => {

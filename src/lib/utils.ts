@@ -17,6 +17,12 @@ export const IMAGE_MIME_TYPES: Record<string, string[]> = {
 }
 export const IMAGE_EXTENSIONS = Object.values(IMAGE_MIME_TYPES).flat()
 
+export const VIDEO_MIME_TYPES: Record<string, string> = {
+  "mp4": "video/mp4",
+  "mov": "video/quicktime",
+}
+export const VIDEO_EXTENSIONS = Object.keys(VIDEO_MIME_TYPES)
+
 export interface ImageDownResult {
   err: boolean
   msg: string
@@ -29,6 +35,19 @@ export interface ImageUploadResult {
   msg: string
   imageUrl?: string
   apiError?: string
+}
+
+export interface VideoUploadResult {
+  err: boolean
+  msg: string
+  videoUrl?: string
+  posterUrl?: string
+  /** true when the file was skipped due to size limit */
+  sizeExceeded?: boolean
+  /** original filename (populated when sizeExceeded) */
+  fileName?: string
+  /** actual file size in MB (populated when sizeExceeded) */
+  fileSize?: number
 }
 
 /**
@@ -131,6 +150,28 @@ export async function getAttachmentUploadPath(image: string, plugin: CustomImage
 export function replaceInTextForUpload(content: string, search: string, desc: string, path: string): string {
   const newLink = `![${desc}](${path})`
   return content.split(search).join(newLink)
+}
+
+/**
+ * 替换文本中的视频 WikiLink 为 HTML5 <video> 标签
+ * @param content - 原始内容
+ * @param search - 要替换的 WikiLink 文本
+ * @param videoUrl - 视频URL
+ * @param posterUrl - 预览图URL（可为空字符串）
+ * @param ext - 视频扩展名 (mp4 / mov)
+ * @returns 替换后的内容
+ */
+export function replaceInTextForVideoUpload(
+  content: string,
+  search: string,
+  videoUrl: string,
+  posterUrl: string,
+  ext: string
+): string {
+  const mimeType = VIDEO_MIME_TYPES[ext.toLowerCase()] ?? `video/${ext.toLowerCase()}`
+  const posterAttr = posterUrl ? ` poster="${posterUrl}"` : ""
+  const newHtml = `<video controls${posterAttr}>\n<source src="${videoUrl}" type="${mimeType}">\n</video>`
+  return content.split(search).join(newHtml)
 }
 
 /**
@@ -479,6 +520,178 @@ export function statusCheck(plugin: CustomImageAutoUploader): void {
   }
 
   plugin.statusBar[2].setText(title)
+}
+
+/**
+ * 从视频文件中提取第一帧作为预览图（poster）
+ * @param file - 视频 TFile
+ * @param plugin - 插件实例
+ * @returns JPEG 图片的 ArrayBuffer，失败时返回 null
+ */
+export async function generateVideoPoster(file: TFile, plugin: CustomImageAutoUploader): Promise<ArrayBuffer | null> {
+  try {
+    const body = await plugin.app.vault.readBinary(file)
+    const ext = file.extension.toLowerCase()
+    const mimeType = VIDEO_MIME_TYPES[ext] ?? `video/${ext}`
+    const blob = new Blob([body], { type: mimeType })
+    const url = URL.createObjectURL(blob)
+
+    return await new Promise<ArrayBuffer | null>((resolve) => {
+      const video = document.createElement("video")
+      video.preload = "auto"
+      video.muted = true
+      video.playsInline = true
+
+      let settled = false
+      const settle = (val: ArrayBuffer | null) => {
+        if (settled) return
+        settled = true
+        URL.revokeObjectURL(url)
+        resolve(val)
+      }
+
+      // Timeout fallback
+      const timer = setTimeout(() => settle(null), 15000)
+
+      const captureFrame = () => {
+        clearTimeout(timer)
+        try {
+          const canvas = document.createElement("canvas")
+          canvas.width = video.videoWidth || 1280
+          canvas.height = video.videoHeight || 720
+          const ctx = canvas.getContext("2d")
+          if (!ctx) { settle(null); return }
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+          canvas.toBlob(
+            (b) => {
+              if (b) {
+                b.arrayBuffer().then((buf) => settle(buf)).catch(() => settle(null))
+              } else {
+                settle(null)
+              }
+            },
+            "image/jpeg",
+            0.85
+          )
+        } catch {
+          settle(null)
+        }
+      }
+
+      video.addEventListener("loadeddata", captureFrame, { once: true })
+      video.addEventListener("error", () => { clearTimeout(timer); settle(null) }, { once: true })
+      video.src = url
+    })
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 上传视频文件（先生成并上传 poster，再上传视频本身）
+ * @param file - 视频 TFile
+ * @param plugin - 插件实例
+ * @returns VideoUploadResult
+ */
+export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader): Promise<VideoUploadResult> {
+  const ext = file.extension.toLowerCase()
+
+  // 校验格式
+  if (!VIDEO_EXTENSIONS.includes(ext)) {
+    return { err: true, msg: $("上传文件不是允许的视频类型") }
+  }
+
+  // 校验文件大小
+  const fileSizeMB = file.stat.size / (1024 * 1024)
+  if (fileSizeMB > plugin.settings.maxVideoSizeMB) {
+    return {
+      err: true,
+      msg: `${file.name} (${fileSizeMB.toFixed(2)} MB) ${$("超出视频大小限制")} ${plugin.settings.maxVideoSizeMB} MB`,
+      sizeExceeded: true,
+      fileName: file.name,
+      fileSize: fileSizeMB,
+    }
+  }
+
+  const headers = plugin.settings.apiToken
+    ? new Headers({ Authorization: plugin.settings.apiToken })
+    : new Headers()
+
+  // ── Step 1: 生成并上传 poster ──────────────────────────────────────
+  let posterUrl = ""
+  const posterBuffer = await generateVideoPoster(file, plugin)
+  if (posterBuffer) {
+    try {
+      const posterName = `${file.basename}_poster.jpg`
+      const posterForm = new FormData()
+      posterForm.append("imagefile", new Blob([posterBuffer], { type: "image/jpeg" }), posterName)
+
+      const posterResp = await fetch(plugin.settings.api, {
+        method: "POST",
+        headers,
+        body: posterForm,
+      })
+      if (posterResp.ok) {
+        const posterJson = await posterResp.json()
+        if (posterJson?.status && posterJson?.data?.imageUrl) {
+          posterUrl = posterJson.data.imageUrl
+        }
+      }
+    } catch {
+      // poster 上传失败时继续，不中断视频上传
+    }
+  }
+
+  // ── Step 2: 上传视频文件 ───────────────────────────────────────────
+  const mimeType = VIDEO_MIME_TYPES[ext] ?? `video/${ext}`
+  let videoBody: ArrayBuffer
+  try {
+    videoBody = await plugin.app.vault.readBinary(file)
+  } catch (e) {
+    return { err: true, msg: $("视频文件读取失败:") + (e as Error).message }
+  }
+
+  const videoForm = new FormData()
+  videoForm.append("imagefile", new Blob([videoBody], { type: mimeType }), file.name)
+
+  let response: Response
+  try {
+    response = await fetch(plugin.settings.api, {
+      method: "POST",
+      headers,
+      body: videoForm,
+    })
+  } catch {
+    return { err: true, msg: $("网络错误,请检查网络是否通畅") }
+  }
+
+  if (!response.ok) {
+    return { err: true, msg: $("网络错误,请检查网络是否通畅") }
+  }
+
+  let result: any
+  try {
+    result = await response.json()
+  } catch {
+    return { err: true, msg: $("视频上传响应解析失败") }
+  }
+
+  if (!result?.status) {
+    const details = Array.isArray(result?.details) ? result.details.join("") : ""
+    return { err: true, msg: `API Error: ${result?.message ?? "unknown"}${details}` }
+  }
+
+  // 删除源文件（如果开启了该选项）
+  if (plugin.settings.isDeleteSource) {
+    plugin.app.fileManager.trashFile(file)
+  }
+
+  return {
+    err: false,
+    msg: result.message,
+    videoUrl: result.data.imageUrl,
+    posterUrl,
+  }
 }
 
 export function setMenu(menu: Menu, plugin: CustomImageAutoUploader, isShowAuto: boolean = false, isNoteMenu: boolean = false) {
