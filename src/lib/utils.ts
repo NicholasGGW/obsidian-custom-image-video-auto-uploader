@@ -617,6 +617,11 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
     ? new Headers({ Authorization: plugin.settings.apiToken })
     : new Headers()
 
+  // poster 始终走图片 API（Custom Image Gateway 支持图片）
+  const imageApiUrl = plugin.settings.api
+  // 视频走独立 videoApi，未配置时 fallback 到图片 API
+  const videoApiUrl = plugin.settings.videoApi?.trim() || plugin.settings.api
+
   // ── Step 1: 生成并上传 poster ──────────────────────────────────────
   let posterUrl = ""
   const posterBuffer = await generateVideoPoster(file, plugin)
@@ -626,7 +631,7 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
       const posterForm = new FormData()
       posterForm.append("imagefile", new Blob([posterBuffer], { type: "image/jpeg" }), posterName)
 
-      const posterResp = await fetch(plugin.settings.api, {
+      const posterResp = await fetch(imageApiUrl, {
         method: "POST",
         headers,
         body: posterForm,
@@ -656,7 +661,7 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
 
   let response: Response
   try {
-    response = await fetch(plugin.settings.api, {
+    response = await fetch(videoApiUrl, {
       method: "POST",
       headers,
       body: videoForm,

@@ -40,6 +40,8 @@ export interface PluginSettings {
   afterUploadTimeout: number
   //API地址
   api: string
+  // 视频上传 API 地址（为空时使用 api 字段）
+  videoApi: string
   //API Token
   apiToken: string
   clipboardReadTip: string
@@ -83,6 +85,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   afterUploadTimeout: 1000,
   // API 网关地址
   api: "http://127.0.0.1:36677/upload",
+  // 视频上传 API 地址（为空时使用 api 字段）
+  videoApi: "",
   // API 令牌
   apiToken: "",
   clipboardReadTip: "",
@@ -191,6 +195,19 @@ export class SettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.api)
           .onChange(async (value) => {
             this.plugin.settings.api = value
+            await this.plugin.saveSettings()
+          })
+      )
+
+    new Setting(set)
+      .setName($("视频上传 API 地址"))
+      .setDesc($("用于上传视频的独立 API 地址（留空则使用上方图片 API 地址）。Custom Image Gateway 目前仅支持图片，若需上传视频请配置支持视频直传的端点"))
+      .addText((text) =>
+        text
+          .setPlaceholder($("留空则使用图片 API 地址"))
+          .setValue(this.plugin.settings.videoApi)
+          .onChange(async (value) => {
+            this.plugin.settings.videoApi = value
             await this.plugin.saveSettings()
           })
       )
