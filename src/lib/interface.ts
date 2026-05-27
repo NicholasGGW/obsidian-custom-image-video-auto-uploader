@@ -23,3 +23,10 @@ export interface UploadTask {
   imageFile: TFile // 图片路径
   metadataItem?: Metadata
 }
+
+export interface VideoUploadTask {
+  matchText: string // 原始匹配文本
+  videoAlt: string // 视频替代文本
+  videoFile: TFile // 视频文件
+  videoExt: string // 视频扩展名 (mp4 / mov)
+}

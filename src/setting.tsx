@@ -59,6 +59,8 @@ export interface PluginSettings {
   contentSet: UploadSet
   //元数据上传设置
   propertyNeedSets: Array<UploadSet>
+  // 视频上传最大大小限制 (MB)
+  maxVideoSizeMB: number
   //  [propName: string]: any;
 }
 
@@ -102,6 +104,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     { key: "cover", type: ImageSvrProcessMode.none.value, width: "0", height: "0" },
     { key: "images", type: ImageSvrProcessMode.none.value, width: "0", height: "0" },
   ],
+  // 视频最大上传大小，默认 50 MB
+  maxVideoSizeMB: 50,
 }
 
 export class SettingTab extends PluginSettingTab {
@@ -290,6 +294,23 @@ export class SettingTab extends PluginSettingTab {
           await this.plugin.saveSettings()
         })
       )
+
+    new Setting(set)
+      .setName($("视频上传最大大小"))
+      .setDesc($("视频文件超出此大小将被跳过并提示错误，单位 MB，默认 50 MB。支持格式：mp4、mov"))
+      .addText((text) =>
+        text
+          .setPlaceholder("50")
+          .setValue(this.plugin.settings.maxVideoSizeMB.toString())
+          .onChange(async (value) => {
+            const num = Number(value)
+            if (!isNaN(num) && num > 0) {
+              this.plugin.settings.maxVideoSizeMB = num
+              await this.plugin.saveSettings()
+            }
+          })
+      )
+
     const root = document.createElement("div")
     root.className = "custom-image-auto-uploader-settings"
     set.appendChild(root)

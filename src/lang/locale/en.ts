@@ -102,4 +102,15 @@ export default <LangMap>{
   "上传全库图片": "Upload Whole Vault Images",
   "删除未引用图片（全库）": "Delete all unreferenced images in the vault",
   "已删除 ${count} 张未引用图片": "Deleted ${count} unreferenced images",
+
+  // Video support
+  "上传当前笔记视频": "Upload Current Note Videos",
+  "上传全库视频": "Upload Whole Vault Videos",
+  "视频上传最大大小": "Maximum video upload size",
+  "视频文件超出此大小将被跳过并提示错误，单位 MB，默认 50 MB。支持格式：mp4、mov": "Videos exceeding this size will be skipped with an error. Unit: MB, default 50 MB. Supported formats: mp4, mov",
+  "上传文件不是允许的视频类型": "File is not an allowed video type",
+  "超出视频大小限制": "exceeds the video size limit of",
+  "视频文件读取失败:": "Failed to read video file:",
+  "视频上传响应解析失败": "Failed to parse video upload response",
+  "未发现未引用图片": "No unreferenced images found",
 };
