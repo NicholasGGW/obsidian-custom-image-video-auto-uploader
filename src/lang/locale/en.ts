@@ -143,7 +143,7 @@ export default <LangMap>{
   "选择图片和视频的上传方式": "Select the upload method for images and videos",
   "WebDAV 服务器地址，不需要末尾加 /": "WebDAV server address, no trailing slash needed",
   "自定义保存路径": "Custom save path",
-  "支持 {YYYYMM} 占位符，例如 Obsidian/{YYYYMM}，留空则上传到根目录": "Supports {YYYYMM} placeholder, e.g. Obsidian/{YYYYMM}. Leave empty to upload to root directory",
+  "支持 {YYYYMM} 占位符，例如 Obsidian/{YYYYMM}，留空则上传到根目录": "Supports date placeholders: YYYY=year, MM=month, DD=day — combine freely inside {}, e.g. {YYYY-MM}, {YYYY_MM_DD}, {YYYYMM}. Leave empty to upload to root directory",
   "公共访问地址前缀": "Public URL prefix",
   "不需要末尾加 /，留空则将 /dav 替换为 /d（适用于 OpenList/AList）": "No trailing slash needed. Leave empty to auto-replace /dav with /d (for OpenList/AList)",
 };

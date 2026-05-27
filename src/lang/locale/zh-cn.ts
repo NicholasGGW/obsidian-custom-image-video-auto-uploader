@@ -139,7 +139,7 @@ export default <LangMap>{
   "选择图片和视频的上传方式": "选择图片和视频的上传方式",
   "WebDAV 服务器地址，不需要末尾加 /": "WebDAV 服务器地址，不需要末尾加 /",
   "自定义保存路径": "自定义保存路径",
-  "支持 {YYYYMM} 占位符，例如 Obsidian/{YYYYMM}，留空则上传到根目录": "支持 {YYYYMM} 占位符，例如 Obsidian/{YYYYMM}，留空则上传到根目录",
+  "支持 {YYYYMM} 占位符，例如 Obsidian/{YYYYMM}，留空则上传到根目录": "支持日期占位符：YYYY=年、MM=月、DD=日，可在 {} 内自由组合，例如 {YYYY-MM}、{YYYY_MM_DD}、{YYYYMM}，留空则上传到根目录",
   "公共访问地址前缀": "公共访问地址前缀",
   "不需要末尾加 /，留空则将 /dav 替换为 /d（适用于 OpenList/AList）": "不需要末尾加 /，留空则将 /dav 替换为 /d（适用于 OpenList/AList）",
 };

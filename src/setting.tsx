@@ -304,7 +304,7 @@ export class SettingTab extends PluginSettingTab {
         .setDesc($("支持 {YYYYMM} 占位符，例如 Obsidian/{YYYYMM}，留空则上传到根目录"))
         .addText((text) =>
           text
-            .setPlaceholder("Obsidian_Attachments/{YYYYMM}")
+            .setPlaceholder("Obsidian_Attachments/{YYYY-MM}")
             .setValue(this.plugin.settings.webdavCustomPath ?? "")
             .onChange(async (value) => {
               this.plugin.settings.webdavCustomPath = value

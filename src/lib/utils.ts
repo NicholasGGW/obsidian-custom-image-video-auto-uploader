@@ -588,19 +588,33 @@ export async function generateVideoPoster(file: TFile, plugin: CustomImageAutoUp
 }
 
 /**
- * 解析自定义路径中的占位符
- * 支持 {YYYYMM} → 当前年月，例如 "202605"
+ * 解析自定义路径中的日期占位符
+ * 花括号内可自由组合 YYYY / MM / DD，分隔符任意
+ * 示例：
+ *   {YYYYMM}      → "202605"
+ *   {YYYY-MM}     → "2026-05"
+ *   {YYYY_MM}     → "2026_05"
+ *   {YYYY/MM/DD}  → "2026/05/27"
+ *   {YYYY}        → "2026"
+ *   {MM-DD}       → "05-27"
  */
 function resolveCustomPath(customPath: string): string {
   const now = new Date()
   const yyyy = now.getFullYear().toString()
   const mm = (now.getMonth() + 1).toString().padStart(2, "0")
-  return customPath.replace(/\{YYYYMM\}/gi, `${yyyy}${mm}`)
+  const dd = now.getDate().toString().padStart(2, "0")
+  // 将每一个 {...} 块内的 YYYY / MM / DD 替换为实际日期，再去掉花括号
+  return customPath.replace(/\{([^}]+)\}/g, (_match, inner: string) => {
+    return inner
+      .replace(/YYYY/g, yyyy)
+      .replace(/MM/g, mm)
+      .replace(/DD/g, dd)
+  })
 }
 
 /**
  * WebDAV PUT 文件上传辅助函数
- * - 支持自定义保存路径（含 {YYYYMM} 占位符）
+ * - 支持自定义保存路径（含日期占位符，如 {YYYY-MM}、{YYYY_MM_DD} 等）
  * - 逐段创建目录（progressive MKCOL），避免父目录不存在导致 PUT 失败
  * - 公共访问 URL 可自定义前缀，留空则自动将 /dav 替换为 /d
  * - 使用 Obsidian requestUrl 走 Electron native HTTP，
