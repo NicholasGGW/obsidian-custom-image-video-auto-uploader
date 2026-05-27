@@ -1,6 +1,6 @@
 import { Menu, Plugin, TFile, Notice, debounce } from "obsidian";
 
-import { imageDown, imageUpload, statusCheck, replaceInText, replaceInTextForUpload, replaceInTextForDownload, replaceInTextForVideoUpload, hasExcludeDomain, autoAddExcludeDomain, metadataCacheHandle, generateRandomString, showTaskNotice, showErrorNotice, getAttachmentUploadPath, setMenu, videoUpload } from "./lib/utils";
+import { imageDown, imageUpload, statusCheck, replaceInText, replaceInTextForUpload, replaceInTextForDownload, replaceInTextForVideoUpload, hasExcludeDomain, autoAddExcludeDomain, metadataCacheHandle, generateRandomString, showTaskNotice, showErrorNotice, getAttachmentUploadPath, setMenu, videoUpload, VIDEO_EXTENSIONS } from "./lib/utils";
 import { SettingTab, PluginSettings, DEFAULT_SETTINGS } from "./setting";
 import { DownTask, UploadTask, VideoUploadTask } from "./lib/interface";
 import { $ } from "./lang/lang";
@@ -299,6 +299,9 @@ export default class CustomImageAutoUploader extends Plugin {
       const file = match[1]
       let readfile = await getAttachmentUploadPath(file, this)
       if (!readfile) continue
+
+      // 跳过视频文件，由 ContentUploadVideo 处理
+      if (VIDEO_EXTENSIONS.includes(readfile.extension.toLowerCase())) continue
 
       // match[2] is the alt
       const imageAlt = match[2] ? match[2] : file
@@ -673,6 +676,9 @@ export default class CustomImageAutoUploader extends Plugin {
           const linkFile = match[1]
           let readfile = await getAttachmentUploadPath(linkFile, this)
           if (!readfile) continue
+
+          // 跳过视频文件，由 VaultUploadVideo 处理
+          if (VIDEO_EXTENSIONS.includes(readfile.extension.toLowerCase())) continue
 
           const imageAlt = match[2] ? match[2] : linkFile
           fileTasks.push({
