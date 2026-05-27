@@ -593,6 +593,61 @@ export async function generateVideoPoster(file: TFile, plugin: CustomImageAutoUp
  * @param plugin - 插件实例
  * @returns VideoUploadResult
  */
+/**
+ * WebDAV PUT 文件上传辅助函数
+ * 按 YYYYMM/ 子目录组织，兼容 OpenList/AList 公共访问 URL 自动推导
+ * 使用独立的用户名/密码进行 Basic Auth，与图片 API Token 完全分离
+ */
+async function webdavUploadFile(
+  buffer: ArrayBuffer,
+  fileName: string,
+  mimeType: string,
+  webdavBase: string,
+  publicUrlBase: string | undefined,
+  webdavUser: string,
+  webdavPassword: string
+): Promise<{ url: string } | { error: string }> {
+  // 日期子目录，格式 YYYYMM，与图片网关保持一致
+  const dateFolder = new Date().toISOString().replace(/-/g, "").slice(0, 6)
+  const base = webdavBase.replace(/\/$/, "")
+  // 公共访问地址：优先使用用户配置，否则将 /dav/ 替换为 /d/（OpenList/AList 惯例）
+  const derivedPublic = (publicUrlBase?.trim() || base.replace(/\/dav\//, "/d/")).replace(/\/$/, "")
+
+  // Basic Auth（支持 Unicode 用户名/密码）
+  const basicAuth = `Basic ${btoa(unescape(encodeURIComponent(`${webdavUser}:${webdavPassword}`)))}`
+
+  // MKCOL 不需要 Content-Type，只需要认证头
+  try {
+    await fetch(`${base}/${dateFolder}`, {
+      method: "MKCOL",
+      headers: { Authorization: basicAuth },
+    })
+  } catch {
+    // 目录已存在（405）或其他忽略情况
+  }
+
+  const remotePath = `${dateFolder}/${fileName}`
+  const putUrl = `${base}/${remotePath}`
+  const publicUrl = `${derivedPublic}/${remotePath}`
+
+  let resp: Response
+  try {
+    resp = await fetch(putUrl, {
+      method: "PUT",
+      headers: { Authorization: basicAuth, "Content-Type": mimeType },
+      body: buffer,
+    })
+  } catch (e) {
+    return { error: $("网络错误,请检查网络是否通畅") + ": " + (e as Error).message }
+  }
+
+  // 201 Created / 204 No Content / 200 OK 均视为成功
+  if (resp.status === 200 || resp.status === 201 || resp.status === 204) {
+    return { url: publicUrl }
+  }
+  return { error: `${$("WebDAV 上传失败")}: HTTP ${resp.status}` }
+}
+
 export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader): Promise<VideoUploadResult> {
   const ext = file.extension.toLowerCase()
 
@@ -613,24 +668,88 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
     }
   }
 
-  const headers = plugin.settings.apiToken
-    ? new Headers({ Authorization: plugin.settings.apiToken })
-    : new Headers()
+  const mimeType = VIDEO_MIME_TYPES[ext] ?? `video/${ext}`
+  const authToken = plugin.settings.apiToken ?? ""
+  const uploadType = plugin.settings.videoUploadType ?? "api"
 
-  // ── Step 1: 生成并上传 poster ──────────────────────────────────────
+  // ══════════════════════════════════════════════════
+  // WebDAV 直传模式
+  // ══════════════════════════════════════════════════
+  if (uploadType === "webdav") {
+    const webdavBase = plugin.settings.videoApi?.trim()
+    if (!webdavBase) {
+      return { err: true, msg: $("WebDAV 地址未配置") }
+    }
+    const publicUrlBase = plugin.settings.videoWebdavPublicUrl
+    // WebDAV 使用独立的用户名/密码，与图片 API Token 分离
+    const webdavUser = plugin.settings.videoWebdavUser ?? ""
+    const webdavPassword = plugin.settings.videoWebdavPassword ?? ""
+
+    // ── Step 1: 生成并上传 poster（WebDAV）──────────────
+    let posterUrl = ""
+    const posterBuffer = await generateVideoPoster(file, plugin)
+    if (posterBuffer) {
+      const posterResult = await webdavUploadFile(
+        posterBuffer,
+        `${file.basename}_poster.jpg`,
+        "image/jpeg",
+        webdavBase,
+        publicUrlBase,
+        webdavUser,
+        webdavPassword
+      )
+      if ("url" in posterResult) posterUrl = posterResult.url
+      // poster 失败不阻断视频上传
+    }
+
+    // ── Step 2: 读取并上传视频（WebDAV）─────────────────
+    let videoBody: ArrayBuffer
+    try {
+      videoBody = await plugin.app.vault.readBinary(file)
+    } catch (e) {
+      return { err: true, msg: $("视频文件读取失败:") + (e as Error).message }
+    }
+
+    const videoResult = await webdavUploadFile(
+      videoBody,
+      file.name,
+      mimeType,
+      webdavBase,
+      publicUrlBase,
+      webdavUser,
+      webdavPassword
+    )
+    if ("error" in videoResult) {
+      return { err: true, msg: videoResult.error }
+    }
+
+    if (plugin.settings.isDeleteSource) {
+      plugin.app.fileManager.trashFile(file)
+    }
+    return { err: false, msg: "success", videoUrl: videoResult.url, posterUrl }
+  }
+
+  // ══════════════════════════════════════════════════
+  // API 网关模式（Custom Image Gateway 协议）
+  // ══════════════════════════════════════════════════
+  const apiHeaders = authToken ? new Headers({ Authorization: authToken }) : new Headers()
+  // poster 走图片 API（Custom Image Gateway 支持图片）
+  const imageApiUrl = plugin.settings.api
+  // 视频走独立 videoApi，未配置时 fallback 到图片 API
+  const videoApiUrl = plugin.settings.videoApi?.trim() || plugin.settings.api
+
+  // ── Step 1: 生成并上传 poster（API）─────────────────
   let posterUrl = ""
   const posterBuffer = await generateVideoPoster(file, plugin)
   if (posterBuffer) {
     try {
-      const posterName = `${file.basename}_poster.jpg`
       const posterForm = new FormData()
-      posterForm.append("imagefile", new Blob([posterBuffer], { type: "image/jpeg" }), posterName)
-
-      const posterResp = await fetch(plugin.settings.api, {
-        method: "POST",
-        headers,
-        body: posterForm,
-      })
+      posterForm.append(
+        "imagefile",
+        new Blob([posterBuffer], { type: "image/jpeg" }),
+        `${file.basename}_poster.jpg`
+      )
+      const posterResp = await fetch(imageApiUrl, { method: "POST", headers: apiHeaders, body: posterForm })
       if (posterResp.ok) {
         const posterJson = await posterResp.json()
         if (posterJson?.status && posterJson?.data?.imageUrl) {
@@ -638,12 +757,11 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
         }
       }
     } catch {
-      // poster 上传失败时继续，不中断视频上传
+      // poster 失败不阻断视频上传
     }
   }
 
-  // ── Step 2: 上传视频文件 ───────────────────────────────────────────
-  const mimeType = VIDEO_MIME_TYPES[ext] ?? `video/${ext}`
+  // ── Step 2: 上传视频（API）──────────────────────────
   let videoBody: ArrayBuffer
   try {
     videoBody = await plugin.app.vault.readBinary(file)
@@ -656,11 +774,7 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
 
   let response: Response
   try {
-    response = await fetch(plugin.settings.api, {
-      method: "POST",
-      headers,
-      body: videoForm,
-    })
+    response = await fetch(videoApiUrl, { method: "POST", headers: apiHeaders, body: videoForm })
   } catch {
     return { err: true, msg: $("网络错误,请检查网络是否通畅") }
   }
@@ -681,17 +795,10 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
     return { err: true, msg: `API Error: ${result?.message ?? "unknown"}${details}` }
   }
 
-  // 删除源文件（如果开启了该选项）
   if (plugin.settings.isDeleteSource) {
     plugin.app.fileManager.trashFile(file)
   }
-
-  return {
-    err: false,
-    msg: result.message,
-    videoUrl: result.data.imageUrl,
-    posterUrl,
-  }
+  return { err: false, msg: result.message, videoUrl: result.data.imageUrl, posterUrl }
 }
 
 export function setMenu(menu: Menu, plugin: CustomImageAutoUploader, isShowAuto: boolean = false, isNoteMenu: boolean = false) {

@@ -40,6 +40,16 @@ export interface PluginSettings {
   afterUploadTimeout: number
   //API地址
   api: string
+  // 视频上传方式: "api" 使用 API 网关协议, "webdav" 使用 WebDAV PUT 直传
+  videoUploadType: "api" | "webdav"
+  // 视频 API 地址（api 模式）或 WebDAV 基础目录地址（webdav 模式）
+  videoApi: string
+  // WebDAV 公共访问地址（webdav 模式，留空则自动将 /dav/ 替换为 /d/，适用于 OpenList/AList）
+  videoWebdavPublicUrl: string
+  // WebDAV 用户名（webdav 模式，Basic Auth）
+  videoWebdavUser: string
+  // WebDAV 密码（webdav 模式，Basic Auth）
+  videoWebdavPassword: string
   //API Token
   apiToken: string
   clipboardReadTip: string
@@ -83,6 +93,16 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   afterUploadTimeout: 1000,
   // API 网关地址
   api: "http://127.0.0.1:36677/upload",
+  // 视频上传方式
+  videoUploadType: "api",
+  // 视频 API 地址 / WebDAV 基础目录地址
+  videoApi: "",
+  // WebDAV 公共访问地址
+  videoWebdavPublicUrl: "",
+  // WebDAV 用户名
+  videoWebdavUser: "",
+  // WebDAV 密码
+  videoWebdavPassword: "",
   // API 令牌
   apiToken: "",
   clipboardReadTip: "",
@@ -194,6 +214,126 @@ export class SettingTab extends PluginSettingTab {
             await this.plugin.saveSettings()
           })
       )
+
+    new Setting(set)
+      .setName($("视频上传方式"))
+      .setDesc($("选择视频文件的上传方式。Custom Image Gateway 目前仅支持图片，视频需选择 WebDAV 直传"))
+      .addDropdown((drop) =>
+        drop
+          .addOption("api", $("API 网关（与图片相同）"))
+          .addOption("webdav", $("WebDAV 直传"))
+          .setValue(this.plugin.settings.videoUploadType)
+          .onChange(async (value) => {
+            this.plugin.settings.videoUploadType = value as "api" | "webdav"
+            this.display()
+            await this.plugin.saveSettings()
+          })
+      )
+
+    if (this.plugin.settings.videoUploadType === "api") {
+      new Setting(set)
+        .setName($("视频 API 地址"))
+        .setDesc($("视频上传的 API 地址，留空则使用上方图片 API 地址"))
+        .addText((text) =>
+          text
+            .setPlaceholder($("留空则使用图片 API 地址"))
+            .setValue(this.plugin.settings.videoApi)
+            .onChange(async (value) => {
+              this.plugin.settings.videoApi = value
+              await this.plugin.saveSettings()
+            })
+        )
+    }
+
+    if (this.plugin.settings.videoUploadType === "webdav") {
+      new Setting(set)
+        .setName($("WebDAV 上传地址"))
+        .setDesc($("WebDAV 基础目录地址，例如: http://host/dav/Obsidian/"))
+        .addText((text) =>
+          text
+            .setPlaceholder("http://host/dav/Obsidian/")
+            .setValue(this.plugin.settings.videoApi)
+            .onChange(async (value) => {
+              this.plugin.settings.videoApi = value
+              await this.plugin.saveSettings()
+            })
+        )
+
+      new Setting(set)
+        .setName($("WebDAV 用户名"))
+        .setDesc($("WebDAV 登录用户名"))
+        .addText((text) =>
+          text
+            .setPlaceholder($("WebDAV 用户名"))
+            .setValue(this.plugin.settings.videoWebdavUser)
+            .onChange(async (value) => {
+              this.plugin.settings.videoWebdavUser = value
+              await this.plugin.saveSettings()
+            })
+        )
+
+      new Setting(set)
+        .setName($("WebDAV 密码"))
+        .setDesc($("WebDAV 登录密码"))
+        .addText((text) => {
+          text.inputEl.type = "password"
+          text
+            .setPlaceholder($("WebDAV 密码"))
+            .setValue(this.plugin.settings.videoWebdavPassword)
+            .onChange(async (value) => {
+              this.plugin.settings.videoWebdavPassword = value
+              await this.plugin.saveSettings()
+            })
+        })
+
+      new Setting(set)
+        .setName($("WebDAV 公共访问地址"))
+        .setDesc($("文件公共下载基础地址，留空则自动将 /dav/ 替换为 /d/（适用于 OpenList/AList）"))
+        .addText((text) =>
+          text
+            .setPlaceholder("http://host/d/Obsidian/")
+            .setValue(this.plugin.settings.videoWebdavPublicUrl)
+            .onChange(async (value) => {
+              this.plugin.settings.videoWebdavPublicUrl = value
+              await this.plugin.saveSettings()
+            })
+        )
+
+      new Setting(set)
+        .setName($("测试 WebDAV 连接"))
+        .setDesc($("验证 WebDAV 地址、用户名和密码是否正确"))
+        .addButton((btn) =>
+          btn
+            .setButtonText($("测试连接"))
+            .setCta()
+            .onClick(async () => {
+              const url = this.plugin.settings.videoApi?.trim()
+              if (!url) {
+                new Notice($("请先填写 WebDAV 上传地址"))
+                return
+              }
+              btn.setButtonText($("连接中...")).setDisabled(true)
+              try {
+                const user = this.plugin.settings.videoWebdavUser ?? ""
+                const pass = this.plugin.settings.videoWebdavPassword ?? ""
+                const auth = `Basic ${btoa(unescape(encodeURIComponent(`${user}:${pass}`)))}`
+                const resp = await fetch(url, {
+                  method: "PROPFIND",
+                  headers: { Authorization: auth, Depth: "0" },
+                })
+                if (resp.ok || resp.status === 207) {
+                  new Notice(`✅ ${$("WebDAV 连接成功")}`)
+                } else {
+                  new Notice(`❌ ${$("WebDAV 连接失败")}: HTTP ${resp.status}`)
+                }
+              } catch (e) {
+                new Notice(`❌ ${$("WebDAV 连接失败")}: ${(e as Error).message}`)
+              } finally {
+                btn.setButtonText($("测试连接")).setDisabled(false)
+              }
+            })
+        )
+    }
 
     const apiToken = new Setting(set)
       .setName($("API 访问令牌"))
