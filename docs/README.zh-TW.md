@@ -82,6 +82,50 @@
 *   **項目地址**: [haierkeys/custom-image-gateway](https://github.com/haierkeys/custom-image-gateway)
 *   **部署文檔**: 請參考項目主頁進行部署。
 
+## 📁 WebDAV 直傳模式
+
+除 API 網關外，插件支援透過 **WebDAV** 直接上傳所有圖片和視頻——無需網關服務器。適合擁有家庭 NAS（例如運行 OpenList/AList）、希望完全自主管理儲存的使用者。
+
+### 插件設定
+
+在插件設定中，將 **全域上傳模式** 設定為 **WebDAV 直傳**，然後填寫以下欄位：
+
+| 設定項 | 範例 | 說明 |
+|--------|------|------|
+| **WebDAV 地址** | `http://127.0.0.1:52444/dav` | 不需要末尾加 / |
+| **自訂儲存路徑** | `Obsidian_Attachments/{YYYYMM}` | `{YYYYMM}` 會自動替換為當前年月（如 `202605`）。留空則上傳到根目錄。 |
+| **WebDAV 使用者名稱** | `your_username` | |
+| **WebDAV 密碼** | `your_password` | |
+| **公共存取地址前綴** | `http://your-nas.tailXXXX.ts.net/d` | 不需要末尾加 /。留空則自動將 `/dav` 替換為 `/d`（適用於 OpenList/AList）。 |
+
+**範例結果**：使用以上設定，檔案 `image.jpg` 將會：
+- 上傳到：`http://127.0.0.1:52444/dav/Obsidian_Attachments/202605/image.jpg`
+- 在筆記中插入為：`http://your-nas.tailXXXX.ts.net/d/Obsidian_Attachments/202605/image.jpg`
+
+### 設定 OpenList / AList
+
+如果您使用 [OpenList](https://github.com/OpenListTeam/OpenList) 或 [AList](https://github.com/AlistGo/alist) 作為 WebDAV 服務器：
+
+1. 在 OpenList/AList 設定中啟用 WebDAV。
+2. 建立一個專用的 Obsidian 附件資料夾（例如 `Obsidian_Attachments`）。
+3. **公共唯讀存取**：在 OpenList/AList 中，為該資料夾路徑開啟訪客使用者存取權限，使公共直鏈（透過 `/d/`）無需登入即可存取。
+
+> ⚠️ **注意**：僅對 Obsidian 附件資料夾開放訪客權限，切勿對整個儲存根目錄開放。
+
+### 使用 Tailscale 安全遠端存取（推薦）
+
+使用 [Tailscale](https://tailscale.com/) 可在任何地方（手機、遠端辦公等）安全存取家庭 NAS，無需將 NAS 暴露在公共網際網路：
+
+1. 在 NAS 和所有裝置上安裝 Tailscale。
+2. NAS 將獲得一個私有主機名稱，例如 `your-nas.tailXXXX.ts.net`。
+3. 在 **公共存取地址前綴** 中填寫：`http://your-nas.tailXXXX.ts.net/d`
+4. 只有加入您 Tailscale 網路的裝置才能存取連結——完全私密、安全。
+
+> ⚠️ **安全提示**：如果選擇將 NAS 暴露在公共網際網路（不使用 Tailscale），請確保：
+> - 使用強 WebDAV 密碼
+> - 僅對特定唯讀資料夾開放訪客權限，禁止寫入存取
+> - 為 NAS 啟用 HTTPS
+
 ## ☕ 贊助與支持
 
 如果覺得這個插件很有用，並且想要支持它的繼續開發，歡迎請我喝杯咖啡：

@@ -82,6 +82,50 @@ The advanced features of this plugin require the use of **Custom Image Gateway**
 *   **Project Address**: [haierkeys/custom-image-gateway](https://github.com/haierkeys/custom-image-gateway)
 *   **Deployment Documentation**: Please refer to the project homepage for deployment.
 
+## 📁 WebDAV Direct Upload Mode
+
+In addition to the API Gateway, the plugin supports uploading all images and videos directly via **WebDAV** — no gateway server needed. This is ideal for home NAS users (e.g., running OpenList/AList) who want full control over their own storage.
+
+### Plugin Settings
+
+In the plugin settings, set **Global Upload Mode** to **WebDAV Direct**, then fill in the following fields:
+
+| Setting | Example | Notes |
+|---------|---------|-------|
+| **WebDAV Address** | `http://127.0.0.1:52444/dav` | No trailing slash needed |
+| **Custom Save Path** | `Obsidian_Attachments/{YYYYMM}` | `{YYYYMM}` is replaced with the current year+month (e.g. `202605`). Leave empty to upload to the root directory. |
+| **WebDAV Username** | `your_username` | |
+| **WebDAV Password** | `your_password` | |
+| **Public URL Prefix** | `http://your-nas.tailXXXX.ts.net/d` | No trailing slash. Leave empty to auto-replace `/dav` with `/d` (for OpenList/AList). |
+
+**Example result**: With the settings above, a file `image.jpg` will be:
+- Uploaded to: `http://127.0.0.1:52444/dav/Obsidian_Attachments/202605/image.jpg`
+- Inserted into notes as: `http://your-nas.tailXXXX.ts.net/d/Obsidian_Attachments/202605/image.jpg`
+
+### Setting Up OpenList / AList
+
+If you use [OpenList](https://github.com/OpenListTeam/OpenList) or [AList](https://github.com/AlistGo/alist) as your WebDAV server:
+
+1. Enable WebDAV in OpenList/AList settings.
+2. Create a dedicated folder for Obsidian attachments (e.g., `Obsidian_Attachments`).
+3. **For public read-only access**: In OpenList/AList, enable guest user access on the specific folder path so that public direct-link URLs (via `/d/`) work without login.
+
+> ⚠️ **Important**: Only enable guest access for the Obsidian attachments folder, not your entire storage root.
+
+### Secure Remote Access with Tailscale (Recommended)
+
+To access your home NAS securely from anywhere (mobile, remote, etc.) without exposing it to the public internet:
+
+1. Install [Tailscale](https://tailscale.com/) on both your NAS and all your devices.
+2. Your NAS will get a private hostname like `your-nas.tailXXXX.ts.net`.
+3. Use this hostname in the **Public URL Prefix** field: `http://your-nas.tailXXXX.ts.net/d`
+4. Only devices in your Tailscale network can access the URLs — completely private and secure.
+
+> ⚠️ **Security Note**: If you choose to expose your NAS to the public internet (without Tailscale), ensure you:
+> - Use strong WebDAV credentials
+> - Grant guest access only to specific read-only folders, never write access
+> - Enable HTTPS on your NAS
+
 ## ☕ Sponsorship & Support
 
 If you find this plugin very useful and want to support its continued development, feel free to buy me a coffee:
