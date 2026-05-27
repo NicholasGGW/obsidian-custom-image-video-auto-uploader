@@ -1,9 +1,10 @@
-import { Menu, Plugin, TFile, Notice, debounce } from "obsidian";
+import { Menu, Plugin, TFile, Notice, debounce, WorkspaceLeaf } from "obsidian";
 
 import { imageDown, imageUpload, imageUploadViaWebdav, statusCheck, replaceInText, replaceInTextForUpload, replaceInTextForDownload, replaceInTextForVideoUpload, hasExcludeDomain, autoAddExcludeDomain, metadataCacheHandle, generateRandomString, showTaskNotice, showErrorNotice, getAttachmentUploadPath, setMenu, videoUpload, VIDEO_EXTENSIONS } from "./lib/utils";
 import { SettingTab, PluginSettings, DEFAULT_SETTINGS } from "./setting";
 import { DownTask, UploadTask, VideoUploadTask } from "./lib/interface";
 import { $ } from "./lang/lang";
+import { MediaManagerView, MEDIA_MANAGER_VIEW_TYPE } from "./views/media-manager-view";
 
 
 //const mdImageRegex = /!\[([^\]]*)\][\(|\[](.*?)\s*("(?:.*[^"])")?\s*[\)|\]]|!\[\[([^\]]*)\]\]/g
@@ -49,6 +50,12 @@ export default class CustomImageAutoUploader extends Plugin {
     await this.loadSettings()
 
     statusCheck(this)
+
+    // 注册媒体管理器侧边栏视图
+    this.registerView(
+      MEDIA_MANAGER_VIEW_TYPE,
+      (leaf: WorkspaceLeaf) => new MediaManagerView(leaf, this)
+    );
 
     this.settingTab = new SettingTab(this.app, this)
     // 注册设置选项
@@ -146,11 +153,38 @@ export default class CustomImageAutoUploader extends Plugin {
       })
     )
 
-    this.addRibbonIcon("image", "Custom Image Auto Uploader", (event) => {
+    this.addRibbonIcon("image", "Custom Media Auto Uploader", (event) => {
       const menu = new Menu()
       setMenu(menu, this, true)
       menu.showAtMouseEvent(event)
     })
+
+    // 媒体管理器侧边栏入口
+    this.addRibbonIcon("film", $("媒体文件管理"), async () => {
+      await this.activateMediaManagerView()
+    })
+
+    this.addCommand({
+      id: "open-media-manager",
+      name: $("媒体文件管理"),
+      callback: async () => {
+        await this.activateMediaManagerView()
+      },
+    })
+  }
+
+  async activateMediaManagerView(): Promise<void> {
+    const { workspace } = this.app
+    const leaves = workspace.getLeavesOfType(MEDIA_MANAGER_VIEW_TYPE)
+    if (leaves.length > 0) {
+      workspace.revealLeaf(leaves[0])
+      return
+    }
+    const leaf = workspace.getRightLeaf(false)
+    if (leaf) {
+      await leaf.setViewState({ type: MEDIA_MANAGER_VIEW_TYPE, active: true })
+      workspace.revealLeaf(leaf)
+    }
   }
 
   async ContentImageAutoHandle(isManual: boolean = false) {

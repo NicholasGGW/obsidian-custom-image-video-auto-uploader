@@ -1,9 +1,9 @@
 {
   "id": "custom-image-auto-uploader",
-  "name": "Custom Image Auto Uploader",
-  "version": "2.9.5",
+  "name": "Custom Media Auto Uploader",
+  "version": "3.0.0",
   "minAppVersion": "1.6.5",
-  "description": "You can batch download images from your notes on desktop, iOS, and Android platforms, and batch upload and save them to a remote server, home NAS, or cloud storage (such as Alibaba Cloud OSS, Amazon S3, Cloudflare R2, MinIO). Additionally, you can stretch, crop, and resize the images.",
+  "description": "Upload and manage images and videos from your Obsidian notes to WebDAV, NAS, or API gateway. Supports batch upload/download, WebDAV direct mode, flexible date paths, and media cleanup manager.",
   "author": "HaierKeys",
   "authorUrl": "https://blog.diybeta.com",
   "isDesktopOnly": false,

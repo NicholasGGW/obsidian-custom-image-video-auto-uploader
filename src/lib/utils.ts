@@ -972,3 +972,234 @@ export function setMenu(menu: Menu, plugin: CustomImageAutoUploader, isShowAuto:
     })
   }
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Media Manager utilities
+// ══════════════════════════════════════════════════════════════════════════════
+
+export interface UploadedMediaItem {
+  id: string
+  matchText: string
+  url: string
+  posterUrl?: string
+  fileName: string
+  mediaType: "image" | "video"
+  notePath: string
+  noteFile: TFile
+}
+
+function urlMatchesConfig(url: string, prefixes: string[], domains: string[]): boolean {
+  for (const prefix of prefixes) {
+    if (url.startsWith(prefix + "/") || url === prefix) return true
+  }
+  try {
+    const hostname = new URL(url).hostname
+    for (const domain of domains) {
+      if (hostname === domain || hostname.endsWith("." + domain)) return true
+    }
+  } catch { /* invalid URL */ }
+  return false
+}
+
+export function extractFilenameFromUrl(url: string): string {
+  try {
+    const pathname = new URL(url).pathname
+    return decodeURIComponent(pathname.split("/").pop() ?? "") || url
+  } catch {
+    return url.split("/").pop()?.split("?")[0] ?? url
+  }
+}
+
+/**
+ * Derive the set of URL prefixes / domains that identify "uploaded" media
+ * based on the current plugin settings (WebDAV public prefix + excludeDomains).
+ */
+export function getUploadedMediaConfig(plugin: CustomImageAutoUploader): {
+  prefixes: string[]
+  domains: string[]
+} {
+  const prefixes: string[] = []
+  const domains: string[] = []
+
+  const pubPrefix = plugin.settings.webdavPublicUrlPrefix?.trim()
+  if (pubPrefix) {
+    prefixes.push(pubPrefix.replace(/\/+$/, ""))
+  }
+
+  // Auto-derive from webdavUrl when no explicit public prefix is set
+  const webdavUrl = plugin.settings.webdavUrl?.trim()
+  if (webdavUrl && !pubPrefix) {
+    const derived = webdavUrl.replace(/\/+$/, "").replace(/\/dav(?=\/|$)/, "/d")
+    if (derived !== webdavUrl.replace(/\/+$/, "")) {
+      prefixes.push(derived)
+    }
+  }
+
+  // Hostnames from excludeDomains list (these are domains of already-uploaded images)
+  const excluded = (plugin.settings.excludeDomains ?? "")
+    .split("\n")
+    .map((d) => d.trim())
+    .filter((d) => d && !d.startsWith("#"))
+  for (const d of excluded) {
+    const host = d.replace(/^\*\./, "").replace(/\*/g, "")
+    if (host) domains.push(host)
+  }
+
+  return { prefixes, domains }
+}
+
+/**
+ * Scan Markdown content for uploaded media items (images + videos) whose URLs
+ * match the configured upload destinations.
+ */
+export function extractUploadedMediaItems(
+  content: string,
+  noteFile: TFile,
+  prefixes: string[],
+  domains: string[]
+): UploadedMediaItem[] {
+  const items: UploadedMediaItem[] = []
+  let counter = 0
+  const seen = new Set<string>()
+
+  const matches = (url: string) => urlMatchesConfig(url, prefixes, domains)
+  const makeId = () => `${noteFile.path}::${counter++}`
+
+  // 1. Markdown images: ![alt](https://url) — with optional ?random suffix
+  const mdImageRe = /!\[([^\]]*)\]\((https?:\/\/[^\s)"]+?)(?:\s+"[^"]*")?\)/g
+  for (const m of content.matchAll(mdImageRe)) {
+    const rawUrl = m[2]
+    if (!matches(rawUrl) || seen.has(m[0])) continue
+    seen.add(m[0])
+    items.push({
+      id: makeId(),
+      matchText: m[0],
+      url: rawUrl,
+      fileName: extractFilenameFromUrl(rawUrl),
+      mediaType: "image",
+      notePath: noteFile.path,
+      noteFile,
+    })
+  }
+
+  // 2. HTML <img src="..."> tags
+  const htmlImgRe = /<img\b[^>]+?\bsrc="(https?:\/\/[^"]+)"[^>]*\/?>/gi
+  for (const m of content.matchAll(htmlImgRe)) {
+    const rawUrl = m[1]
+    if (!matches(rawUrl) || seen.has(m[0])) continue
+    seen.add(m[0])
+    items.push({
+      id: makeId(),
+      matchText: m[0],
+      url: rawUrl,
+      fileName: extractFilenameFromUrl(rawUrl),
+      mediaType: "image",
+      notePath: noteFile.path,
+      noteFile,
+    })
+  }
+
+  // 3. HTML <video ...poster="..."><source src="..."></video> blocks
+  const videoBlockRe = /<video\b([^>]*)>([\s\S]*?)<\/video>/gi
+  for (const m of content.matchAll(videoBlockRe)) {
+    const attrs = m[1]
+    const inner = m[2]
+    const posterMatch = attrs.match(/\bposter="(https?:\/\/[^"]+)"/)
+    const posterUrl = posterMatch?.[1]
+    const srcMatch = inner.match(/<source\b[^>]+?\bsrc="(https?:\/\/[^"]+)"/)
+    if (!srcMatch) continue
+    const videoUrl = srcMatch[1]
+    if (!matches(videoUrl) && !(posterUrl && matches(posterUrl))) continue
+    if (seen.has(m[0])) continue
+    seen.add(m[0])
+    items.push({
+      id: makeId(),
+      matchText: m[0],
+      url: videoUrl,
+      posterUrl,
+      fileName: extractFilenameFromUrl(videoUrl),
+      mediaType: "video",
+      notePath: noteFile.path,
+      noteFile,
+    })
+  }
+
+  return items
+}
+
+/** Return the effective public URL prefix (explicit config or auto-derived from webdavUrl). */
+export function getEffectivePublicPrefix(plugin: CustomImageAutoUploader): string {
+  const explicit = plugin.settings.webdavPublicUrlPrefix?.trim()
+  if (explicit) return explicit.replace(/\/+$/, "")
+  return (plugin.settings.webdavUrl ?? "").replace(/\/+$/, "").replace(/\/dav(?=\/|$)/, "/d")
+}
+
+/** Convert a public-access file URL back to its internal WebDAV URL for server-side operations. */
+export function publicUrlToWebdavUrl(
+  fileUrl: string,
+  publicPrefix: string,
+  webdavBase: string
+): string | null {
+  const cleanPrefix = publicPrefix.replace(/\/+$/, "")
+  const cleanBase = webdavBase.replace(/\/+$/, "")
+  if (!fileUrl.startsWith(cleanPrefix + "/") && fileUrl !== cleanPrefix) return null
+  const relPath = fileUrl.slice(cleanPrefix.length).replace(/^\/+/, "")
+  return `${cleanBase}/${relPath}`
+}
+
+/** Send a WebDAV DELETE request for a single file. 404 is treated as success (already gone). */
+export async function webdavDeleteRemoteFile(
+  webdavFileUrl: string,
+  basicAuth: string
+): Promise<{ ok: true } | { error: string }> {
+  try {
+    const resp = await requestUrl({
+      url: webdavFileUrl,
+      method: "DELETE",
+      headers: { Authorization: basicAuth },
+      throw: false,
+    })
+    if (resp.status === 204 || resp.status === 200 || resp.status === 404) {
+      return { ok: true }
+    }
+    return { error: `HTTP ${resp.status}` }
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+}
+
+/** Fetch the file size of a remote WebDAV resource via PROPFIND. Returns null on failure. */
+export async function webdavGetRemoteFileSize(
+  webdavFileUrl: string,
+  basicAuth: string
+): Promise<number | null> {
+  try {
+    const body = `<?xml version="1.0" encoding="UTF-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:getcontentlength/></D:prop></D:propfind>`
+    const resp = await requestUrl({
+      url: webdavFileUrl,
+      method: "PROPFIND",
+      headers: {
+        Authorization: basicAuth,
+        "Content-Type": "text/xml; charset=utf-8",
+        Depth: "0",
+      },
+      body,
+      throw: false,
+    })
+    if (resp.status !== 207) return null
+    const m = resp.text.match(
+      /<(?:[a-z]+:)?getcontentlength[^>]*>(\d+)<\/(?:[a-z]+:)?getcontentlength>/i
+    )
+    return m ? parseInt(m[1], 10) : null
+  } catch {
+    return null
+  }
+}
+
+/** Format a byte count as a human-readable string. */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
