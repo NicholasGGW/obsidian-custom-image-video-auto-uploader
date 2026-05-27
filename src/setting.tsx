@@ -40,8 +40,12 @@ export interface PluginSettings {
   afterUploadTimeout: number
   //API地址
   api: string
-  // 视频上传 API 地址（为空时使用 api 字段）
+  // 视频上传方式: "api" 使用 API 网关协议, "webdav" 使用 WebDAV PUT 直传
+  videoUploadType: "api" | "webdav"
+  // 视频 API 地址（api 模式）或 WebDAV 基础目录地址（webdav 模式）
   videoApi: string
+  // WebDAV 公共访问地址（webdav 模式，留空则自动将 /dav/ 替换为 /d/，适用于 OpenList/AList）
+  videoWebdavPublicUrl: string
   //API Token
   apiToken: string
   clipboardReadTip: string
@@ -85,8 +89,12 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   afterUploadTimeout: 1000,
   // API 网关地址
   api: "http://127.0.0.1:36677/upload",
-  // 视频上传 API 地址（为空时使用 api 字段）
+  // 视频上传方式
+  videoUploadType: "api",
+  // 视频 API 地址 / WebDAV 基础目录地址
   videoApi: "",
+  // WebDAV 公共访问地址
+  videoWebdavPublicUrl: "",
   // API 令牌
   apiToken: "",
   clipboardReadTip: "",
@@ -200,17 +208,62 @@ export class SettingTab extends PluginSettingTab {
       )
 
     new Setting(set)
-      .setName($("视频上传 API 地址"))
-      .setDesc($("用于上传视频的独立 API 地址（留空则使用上方图片 API 地址）。Custom Image Gateway 目前仅支持图片，若需上传视频请配置支持视频直传的端点"))
-      .addText((text) =>
-        text
-          .setPlaceholder($("留空则使用图片 API 地址"))
-          .setValue(this.plugin.settings.videoApi)
+      .setName($("视频上传方式"))
+      .setDesc($("选择视频文件的上传方式。Custom Image Gateway 目前仅支持图片，视频需选择 WebDAV 直传"))
+      .addDropdown((drop) =>
+        drop
+          .addOption("api", $("API 网关（与图片相同）"))
+          .addOption("webdav", $("WebDAV 直传"))
+          .setValue(this.plugin.settings.videoUploadType)
           .onChange(async (value) => {
-            this.plugin.settings.videoApi = value
+            this.plugin.settings.videoUploadType = value as "api" | "webdav"
+            this.display()
             await this.plugin.saveSettings()
           })
       )
+
+    if (this.plugin.settings.videoUploadType === "api") {
+      new Setting(set)
+        .setName($("视频 API 地址"))
+        .setDesc($("视频上传的 API 地址，留空则使用上方图片 API 地址"))
+        .addText((text) =>
+          text
+            .setPlaceholder($("留空则使用图片 API 地址"))
+            .setValue(this.plugin.settings.videoApi)
+            .onChange(async (value) => {
+              this.plugin.settings.videoApi = value
+              await this.plugin.saveSettings()
+            })
+        )
+    }
+
+    if (this.plugin.settings.videoUploadType === "webdav") {
+      new Setting(set)
+        .setName($("WebDAV 上传地址"))
+        .setDesc($("WebDAV 基础目录地址，例如: http://host/dav/Obsidian/"))
+        .addText((text) =>
+          text
+            .setPlaceholder("http://host/dav/Obsidian/")
+            .setValue(this.plugin.settings.videoApi)
+            .onChange(async (value) => {
+              this.plugin.settings.videoApi = value
+              await this.plugin.saveSettings()
+            })
+        )
+
+      new Setting(set)
+        .setName($("WebDAV 公共访问地址"))
+        .setDesc($("文件公共下载基础地址，留空则自动将 /dav/ 替换为 /d/（适用于 OpenList/AList）"))
+        .addText((text) =>
+          text
+            .setPlaceholder("http://host/d/Obsidian/")
+            .setValue(this.plugin.settings.videoWebdavPublicUrl)
+            .onChange(async (value) => {
+              this.plugin.settings.videoWebdavPublicUrl = value
+              await this.plugin.saveSettings()
+            })
+        )
+    }
 
     const apiToken = new Setting(set)
       .setName($("API 访问令牌"))
