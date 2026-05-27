@@ -596,6 +596,7 @@ export async function generateVideoPoster(file: TFile, plugin: CustomImageAutoUp
 /**
  * WebDAV PUT 文件上传辅助函数
  * 按 YYYYMM/ 子目录组织，兼容 OpenList/AList 公共访问 URL 自动推导
+ * 使用独立的用户名/密码进行 Basic Auth，与图片 API Token 完全分离
  */
 async function webdavUploadFile(
   buffer: ArrayBuffer,
@@ -603,7 +604,8 @@ async function webdavUploadFile(
   mimeType: string,
   webdavBase: string,
   publicUrlBase: string | undefined,
-  authToken: string
+  webdavUser: string,
+  webdavPassword: string
 ): Promise<{ url: string } | { error: string }> {
   // 日期子目录，格式 YYYYMM，与图片网关保持一致
   const dateFolder = new Date().toISOString().replace(/-/g, "").slice(0, 6)
@@ -611,14 +613,17 @@ async function webdavUploadFile(
   // 公共访问地址：优先使用用户配置，否则将 /dav/ 替换为 /d/（OpenList/AList 惯例）
   const derivedPublic = (publicUrlBase?.trim() || base.replace(/\/dav\//, "/d/")).replace(/\/$/, "")
 
-  const putHeaders: Record<string, string> = { "Content-Type": mimeType }
-  if (authToken) putHeaders["Authorization"] = authToken
+  // Basic Auth（支持 Unicode 用户名/密码）
+  const basicAuth = `Basic ${btoa(unescape(encodeURIComponent(`${webdavUser}:${webdavPassword}`)))}`
 
-  // MKCOL 创建日期目录（已存在时 405/405，忽略即可）
+  // MKCOL 不需要 Content-Type，只需要认证头
   try {
-    await fetch(`${base}/${dateFolder}`, { method: "MKCOL", headers: putHeaders })
+    await fetch(`${base}/${dateFolder}`, {
+      method: "MKCOL",
+      headers: { Authorization: basicAuth },
+    })
   } catch {
-    // 目录已存在或不需要创建，忽略
+    // 目录已存在（405）或其他忽略情况
   }
 
   const remotePath = `${dateFolder}/${fileName}`
@@ -627,7 +632,11 @@ async function webdavUploadFile(
 
   let resp: Response
   try {
-    resp = await fetch(putUrl, { method: "PUT", headers: putHeaders, body: buffer })
+    resp = await fetch(putUrl, {
+      method: "PUT",
+      headers: { Authorization: basicAuth, "Content-Type": mimeType },
+      body: buffer,
+    })
   } catch (e) {
     return { error: $("网络错误,请检查网络是否通畅") + ": " + (e as Error).message }
   }
@@ -672,6 +681,9 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
       return { err: true, msg: $("WebDAV 地址未配置") }
     }
     const publicUrlBase = plugin.settings.videoWebdavPublicUrl
+    // WebDAV 使用独立的用户名/密码，与图片 API Token 分离
+    const webdavUser = plugin.settings.videoWebdavUser ?? ""
+    const webdavPassword = plugin.settings.videoWebdavPassword ?? ""
 
     // ── Step 1: 生成并上传 poster（WebDAV）──────────────
     let posterUrl = ""
@@ -683,7 +695,8 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
         "image/jpeg",
         webdavBase,
         publicUrlBase,
-        authToken
+        webdavUser,
+        webdavPassword
       )
       if ("url" in posterResult) posterUrl = posterResult.url
       // poster 失败不阻断视频上传
@@ -703,7 +716,8 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
       mimeType,
       webdavBase,
       publicUrlBase,
-      authToken
+      webdavUser,
+      webdavPassword
     )
     if ("error" in videoResult) {
       return { err: true, msg: videoResult.error }
