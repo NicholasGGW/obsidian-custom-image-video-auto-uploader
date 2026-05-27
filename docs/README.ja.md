@@ -82,6 +82,50 @@ PCやモバイルデバイスからノート内の画像を一括ダウンロー
 *   **プロジェクトアドレス**: [haierkeys/custom-image-gateway](https://github.com/haierkeys/custom-image-gateway)
 *   **デプロイメントドキュメント**: プロジェクトのホームページを参照してデプロイしてください。
 
+## 📁 WebDAV ダイレクトアップロードモード
+
+APIゲートウェイに加えて、プラグインはすべての画像と動画を **WebDAV** 経由で直接アップロードすることをサポートしています。ゲートウェイサーバーは不要です。ホームNAS（OpenList/AList など）を持つユーザーに最適です。
+
+### プラグイン設定
+
+プラグイン設定で **グローバルアップロードモード** を **WebDAV ダイレクト** に設定し、以下のフィールドを入力してください：
+
+| 設定 | 例 | 備考 |
+|------|-----|------|
+| **WebDAV アドレス** | `http://127.0.0.1:52444/dav` | 末尾のスラッシュは不要 |
+| **カスタム保存パス** | `Obsidian_Attachments/{YYYYMM}` | `{YYYYMM}` は現在の年月（例：`202605`）に自動置換されます。空欄にするとルートディレクトリにアップロードされます。 |
+| **WebDAV ユーザー名** | `your_username` | |
+| **WebDAV パスワード** | `your_password` | |
+| **公開URLプレフィックス** | `http://your-nas.tailXXXX.ts.net/d` | 末尾のスラッシュは不要。空欄にすると `/dav` が自動的に `/d` に置換されます（OpenList/AList 向け）。 |
+
+**例**: 上記の設定で `image.jpg` は以下のようになります：
+- アップロード先：`http://127.0.0.1:52444/dav/Obsidian_Attachments/202605/image.jpg`
+- ノートへの挿入：`http://your-nas.tailXXXX.ts.net/d/Obsidian_Attachments/202605/image.jpg`
+
+### OpenList / AList の設定
+
+[OpenList](https://github.com/OpenListTeam/OpenList) または [AList](https://github.com/AlistGo/alist) をWebDAVサーバーとして使用する場合：
+
+1. OpenList/AList の設定でWebDAVを有効にします。
+2. Obsidian の添付ファイル専用フォルダ（例：`Obsidian_Attachments`）を作成します。
+3. **公開読み取り専用アクセス**：OpenList/AList で、特定のフォルダパスへのゲストユーザーアクセスを有効にして、ログインなしで公開ダイレクトリンク（`/d/` 経由）にアクセスできるようにします。
+
+> ⚠️ **重要**：ゲストアクセスは Obsidian 添付ファイルフォルダのみに限定し、ストレージルート全体には絶対に設定しないでください。
+
+### Tailscale でセキュアなリモートアクセス（推奨）
+
+[Tailscale](https://tailscale.com/) を使用することで、ホームNASをパブリックインターネットに公開せずに、どこからでも安全にアクセスできます：
+
+1. NAS とすべてのデバイスに Tailscale をインストールします。
+2. NAS は `your-nas.tailXXXX.ts.net` のようなプライベートホスト名を取得します。
+3. **公開URLプレフィックス** フィールドに入力：`http://your-nas.tailXXXX.ts.net/d`
+4. Tailscale ネットワークに参加したデバイスのみがURLにアクセスできます。完全にプライベートで安全です。
+
+> ⚠️ **セキュリティ注意**：Tailscale なしでNASをパブリックインターネットに公開する場合は以下を確認してください：
+> - 強力なWebDAV認証情報を使用する
+> - 特定の読み取り専用フォルダにのみゲストアクセスを許可し、書き込みアクセスは絶対に許可しない
+> - NASでHTTPSを有効にする
+
 ## ☕ スポンサーとサポート
 
 このプラグインが役に立ち、開発を継続的にサポートしたい場合は、コーヒーを一杯ご馳走していただけると幸いです：

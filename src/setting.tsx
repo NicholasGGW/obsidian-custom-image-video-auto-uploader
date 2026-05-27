@@ -38,25 +38,27 @@ export interface PluginSettings {
   isAutoDown: boolean
   isCloseNotice: boolean
   afterUploadTimeout: number
+  // 全局上传模式："gateway" 使用 API 网关（图片走网关，视频可选），"webdav" 全部走 WebDAV
+  uploadMode: "gateway" | "webdav"
   //API地址
   api: string
-  // 视频上传方式: "api" 使用 API 网关协议, "webdav" 使用 WebDAV PUT 直传
+  // 视频上传方式（仅 gateway 模式下有效）: "api" | "webdav"
   videoUploadType: "api" | "webdav"
-  // 视频 API 地址（api 模式）或 WebDAV 基础目录地址（webdav 模式）
+  // 视频 API 地址（gateway + api 模式）
   videoApi: string
-  // WebDAV 公共访问地址（webdav 模式，留空则自动将 /dav/ 替换为 /d/，适用于 OpenList/AList）
-  videoWebdavPublicUrl: string
-  // WebDAV 用户名（webdav 模式，Basic Auth）
-  videoWebdavUser: string
-  // WebDAV 密码（webdav 模式，Basic Auth）
-  videoWebdavPassword: string
+  // 统一 WebDAV 配置（全局 webdav 模式 + gateway webdav 视频模式均使用）
+  webdavUrl: string
+  webdavUser: string
+  webdavPassword: string
+  // 自定义保存路径，支持 {YYYYMM} 占位符，例如 Obsidian_Attachments/{YYYYMM}
+  webdavCustomPath: string
+  // 公共访问地址前缀，不需要末尾加 /，留空则自动将 /dav 替换为 /d
+  webdavPublicUrlPrefix: string
   //API Token
   apiToken: string
   clipboardReadTip: string
   //处理排除的域名清单
   excludeDomains: string
-  //// 是否处理剪贴板图片
-  // isHandleClipboard: boolean;
   //本地图片上传后是否删除
   isDeleteSource: boolean
   //上传后的图片是否随机后缀
@@ -71,15 +73,7 @@ export interface PluginSettings {
   propertyNeedSets: Array<UploadSet>
   // 视频上传最大大小限制 (MB)
   maxVideoSizeMB: number
-  //  [propName: string]: any;
 }
-
-/**
- *
-
-![这是图片](https://markdown.com.cn/assets/img/philly-magic-garden.9c0b4415.jpg)
-
- */
 
 // 默认插件设置
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -91,18 +85,20 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   isCloseNotice: true,
   // 上传后的超时时间，单位为毫秒
   afterUploadTimeout: 1000,
+  // 全局上传模式，默认使用 API 网关
+  uploadMode: "gateway",
   // API 网关地址
   api: "http://127.0.0.1:36677/upload",
-  // 视频上传方式
+  // 视频上传方式（gateway 模式）
   videoUploadType: "api",
-  // 视频 API 地址 / WebDAV 基础目录地址
+  // 视频 API 地址
   videoApi: "",
-  // WebDAV 公共访问地址
-  videoWebdavPublicUrl: "",
-  // WebDAV 用户名
-  videoWebdavUser: "",
-  // WebDAV 密码
-  videoWebdavPassword: "",
+  // 统一 WebDAV 配置
+  webdavUrl: "",
+  webdavUser: "",
+  webdavPassword: "",
+  webdavCustomPath: "",
+  webdavPublicUrlPrefix: "",
   // API 令牌
   apiToken: "",
   clipboardReadTip: "",
@@ -142,6 +138,9 @@ export class SettingTab extends PluginSettingTab {
 
     set.empty()
 
+    // ══════════════════════════════════════════════════
+    // 通用设置
+    // ══════════════════════════════════════════════════
     new Setting(set)
       .setName("| " + $("通用"))
       .setHeading()
@@ -190,6 +189,9 @@ export class SettingTab extends PluginSettingTab {
         })
       )
 
+    // ══════════════════════════════════════════════════
+    // 上传模式
+    // ══════════════════════════════════════════════════
     new Setting(set)
       .setName("| " + $("API 网关"))
       .setHeading()
@@ -202,59 +204,110 @@ export class SettingTab extends PluginSettingTab {
     const reactRoot2 = createRoot(root2)
     reactRoot2.render(<SettingsView plugin={this.plugin} />)
 
-    const api = new Setting(set)
-      .setName($("API 网关地址"))
-      .setDesc($("Custom Image Gateway 地址"))
-      .addText((text) =>
-        text
-          .setPlaceholder($("输入您的 Custom Image Gateway 地址"))
-          .setValue(this.plugin.settings.api)
-          .onChange(async (value) => {
-            this.plugin.settings.api = value
-            await this.plugin.saveSettings()
-          })
-      )
-
+    // 全局上传模式选择
     new Setting(set)
-      .setName($("视频上传方式"))
-      .setDesc($("选择视频文件的上传方式。Custom Image Gateway 目前仅支持图片，视频需选择 WebDAV 直传"))
+      .setName($("全局上传模式"))
+      .setDesc($("选择图片和视频的上传方式"))
       .addDropdown((drop) =>
         drop
-          .addOption("api", $("API 网关（与图片相同）"))
+          .addOption("gateway", $("API 网关"))
           .addOption("webdav", $("WebDAV 直传"))
-          .setValue(this.plugin.settings.videoUploadType)
+          .setValue(this.plugin.settings.uploadMode ?? "gateway")
           .onChange(async (value) => {
-            this.plugin.settings.videoUploadType = value as "api" | "webdav"
+            this.plugin.settings.uploadMode = value as "gateway" | "webdav"
             this.display()
             await this.plugin.saveSettings()
           })
       )
 
-    if (this.plugin.settings.videoUploadType === "api") {
+    const uploadMode = this.plugin.settings.uploadMode ?? "gateway"
+
+    // ── API 网关模式专属设置 ──────────────────────────
+    if (uploadMode === "gateway") {
       new Setting(set)
-        .setName($("视频 API 地址"))
-        .setDesc($("视频上传的 API 地址，留空则使用上方图片 API 地址"))
+        .setName($("API 网关地址"))
+        .setDesc($("Custom Image Gateway 地址"))
         .addText((text) =>
           text
-            .setPlaceholder($("留空则使用图片 API 地址"))
-            .setValue(this.plugin.settings.videoApi)
+            .setPlaceholder($("输入您的 Custom Image Gateway 地址"))
+            .setValue(this.plugin.settings.api)
             .onChange(async (value) => {
-              this.plugin.settings.videoApi = value
+              this.plugin.settings.api = value
+              await this.plugin.saveSettings()
+            })
+        )
+
+      new Setting(set)
+        .setName($("视频上传方式"))
+        .setDesc($("选择视频文件的上传方式。Custom Image Gateway 目前仅支持图片，视频需选择 WebDAV 直传"))
+        .addDropdown((drop) =>
+          drop
+            .addOption("api", $("API 网关（与图片相同）"))
+            .addOption("webdav", $("WebDAV 直传"))
+            .setValue(this.plugin.settings.videoUploadType)
+            .onChange(async (value) => {
+              this.plugin.settings.videoUploadType = value as "api" | "webdav"
+              this.display()
+              await this.plugin.saveSettings()
+            })
+        )
+
+      if (this.plugin.settings.videoUploadType === "api") {
+        new Setting(set)
+          .setName($("视频 API 地址"))
+          .setDesc($("视频上传的 API 地址，留空则使用上方图片 API 地址"))
+          .addText((text) =>
+            text
+              .setPlaceholder($("留空则使用图片 API 地址"))
+              .setValue(this.plugin.settings.videoApi)
+              .onChange(async (value) => {
+                this.plugin.settings.videoApi = value
+                await this.plugin.saveSettings()
+              })
+          )
+      }
+
+      new Setting(set)
+        .setName($("API 访问令牌"))
+        .setDesc($("用于访问API的令牌"))
+        .addText((text) =>
+          text
+            .setPlaceholder($("输入您的 API 访问令牌"))
+            .setValue(this.plugin.settings.apiToken)
+            .onChange(async (value) => {
+              this.plugin.settings.apiToken = value
               await this.plugin.saveSettings()
             })
         )
     }
 
-    if (this.plugin.settings.videoUploadType === "webdav") {
+    // ── WebDAV 配置区块 ───────────────────────────────
+    // 显示条件：全局 webdav 模式，或 gateway 模式下视频选择了 webdav
+    const showWebDAV = uploadMode === "webdav" || (uploadMode === "gateway" && this.plugin.settings.videoUploadType === "webdav")
+
+    if (showWebDAV) {
       new Setting(set)
         .setName($("WebDAV 上传地址"))
-        .setDesc($("WebDAV 基础目录地址，例如: http://host/dav/Obsidian/"))
+        .setDesc($("WebDAV 服务器地址，不需要末尾加 /"))
         .addText((text) =>
           text
-            .setPlaceholder("http://host/dav/Obsidian/")
-            .setValue(this.plugin.settings.videoApi)
+            .setPlaceholder("http://host/dav")
+            .setValue(this.plugin.settings.webdavUrl ?? "")
             .onChange(async (value) => {
-              this.plugin.settings.videoApi = value
+              this.plugin.settings.webdavUrl = value
+              await this.plugin.saveSettings()
+            })
+        )
+
+      new Setting(set)
+        .setName($("自定义保存路径"))
+        .setDesc($("支持 {YYYYMM} 占位符，例如 Obsidian/{YYYYMM}，留空则上传到根目录"))
+        .addText((text) =>
+          text
+            .setPlaceholder("Obsidian_Attachments/{YYYY-MM}")
+            .setValue(this.plugin.settings.webdavCustomPath ?? "")
+            .onChange(async (value) => {
+              this.plugin.settings.webdavCustomPath = value
               await this.plugin.saveSettings()
             })
         )
@@ -265,9 +318,9 @@ export class SettingTab extends PluginSettingTab {
         .addText((text) =>
           text
             .setPlaceholder($("WebDAV 用户名"))
-            .setValue(this.plugin.settings.videoWebdavUser)
+            .setValue(this.plugin.settings.webdavUser ?? "")
             .onChange(async (value) => {
-              this.plugin.settings.videoWebdavUser = value
+              this.plugin.settings.webdavUser = value
               await this.plugin.saveSettings()
             })
         )
@@ -279,22 +332,22 @@ export class SettingTab extends PluginSettingTab {
           text.inputEl.type = "password"
           text
             .setPlaceholder($("WebDAV 密码"))
-            .setValue(this.plugin.settings.videoWebdavPassword)
+            .setValue(this.plugin.settings.webdavPassword ?? "")
             .onChange(async (value) => {
-              this.plugin.settings.videoWebdavPassword = value
+              this.plugin.settings.webdavPassword = value
               await this.plugin.saveSettings()
             })
         })
 
       new Setting(set)
-        .setName($("WebDAV 公共访问地址"))
-        .setDesc($("文件公共下载基础地址，留空则自动将 /dav/ 替换为 /d/（适用于 OpenList/AList）"))
+        .setName($("公共访问地址前缀"))
+        .setDesc($("不需要末尾加 /，留空则将 /dav 替换为 /d（适用于 OpenList/AList）"))
         .addText((text) =>
           text
-            .setPlaceholder("http://host/d/Obsidian/")
-            .setValue(this.plugin.settings.videoWebdavPublicUrl)
+            .setPlaceholder("http://your-nas.tailXXXX.ts.net/d")
+            .setValue(this.plugin.settings.webdavPublicUrlPrefix ?? "")
             .onChange(async (value) => {
-              this.plugin.settings.videoWebdavPublicUrl = value
+              this.plugin.settings.webdavPublicUrlPrefix = value
               await this.plugin.saveSettings()
             })
         )
@@ -307,15 +360,15 @@ export class SettingTab extends PluginSettingTab {
             .setButtonText($("测试连接"))
             .setCta()
             .onClick(async () => {
-              const url = this.plugin.settings.videoApi?.trim()
+              const url = this.plugin.settings.webdavUrl?.trim()
               if (!url) {
                 new Notice($("请先填写 WebDAV 上传地址"))
                 return
               }
               btn.setButtonText($("连接中...")).setDisabled(true)
               try {
-                const user = this.plugin.settings.videoWebdavUser ?? ""
-                const pass = this.plugin.settings.videoWebdavPassword ?? ""
+                const user = this.plugin.settings.webdavUser ?? ""
+                const pass = this.plugin.settings.webdavPassword ?? ""
                 const auth = `Basic ${btoa(unescape(encodeURIComponent(`${user}:${pass}`)))}`
                 const resp = await requestUrl({
                   url,
@@ -337,19 +390,9 @@ export class SettingTab extends PluginSettingTab {
         )
     }
 
-    const apiToken = new Setting(set)
-      .setName($("API 访问令牌"))
-      .setDesc($("用于访问API的令牌"))
-      .addText((text) =>
-        text
-          .setPlaceholder($("输入您的 API 访问令牌"))
-          .setValue(this.plugin.settings.apiToken)
-          .onChange(async (value) => {
-            this.plugin.settings.apiToken = value
-            await this.plugin.saveSettings()
-          })
-      )
-
+    // ══════════════════════════════════════════════════
+    // 下载设置
+    // ══════════════════════════════════════════════════
     new Setting(set)
       .setName("| " + $("下载"))
       .setHeading()
@@ -367,6 +410,10 @@ export class SettingTab extends PluginSettingTab {
             await this.plugin.saveSettings()
           })
       )
+
+    // ══════════════════════════════════════════════════
+    // 上传设置
+    // ══════════════════════════════════════════════════
     new Setting(set)
       .setName("| " + $("上传"))
       .setHeading()
@@ -460,6 +507,9 @@ export class SettingTab extends PluginSettingTab {
     const reactRoot = createRoot(root)
     reactRoot.render(<CompressionView plugin={this.plugin} />)
 
+    // ══════════════════════════════════════════════════
+    // 支持 / 捐赠
+    // ══════════════════════════════════════════════════
     new Setting(set)
       .setName("| " + $("支持"))
       .setHeading()

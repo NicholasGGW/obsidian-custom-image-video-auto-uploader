@@ -1,6 +1,6 @@
 import { Menu, Plugin, TFile, Notice, debounce } from "obsidian";
 
-import { imageDown, imageUpload, statusCheck, replaceInText, replaceInTextForUpload, replaceInTextForDownload, replaceInTextForVideoUpload, hasExcludeDomain, autoAddExcludeDomain, metadataCacheHandle, generateRandomString, showTaskNotice, showErrorNotice, getAttachmentUploadPath, setMenu, videoUpload, VIDEO_EXTENSIONS } from "./lib/utils";
+import { imageDown, imageUpload, imageUploadViaWebdav, statusCheck, replaceInText, replaceInTextForUpload, replaceInTextForDownload, replaceInTextForVideoUpload, hasExcludeDomain, autoAddExcludeDomain, metadataCacheHandle, generateRandomString, showTaskNotice, showErrorNotice, getAttachmentUploadPath, setMenu, videoUpload, VIDEO_EXTENSIONS } from "./lib/utils";
 import { SettingTab, PluginSettings, DEFAULT_SETTINGS } from "./setting";
 import { DownTask, UploadTask, VideoUploadTask } from "./lib/interface";
 import { $ } from "./lang/lang";
@@ -316,9 +316,12 @@ export default class CustomImageAutoUploader extends Plugin {
 
     // 第二次循环：批量异步处理任务
     let isModify = false
+    const useWebdav = this.settings.uploadMode === "webdav"
     const uploadResults = await Promise.all(
       uploadTasks.map(async (task) => {
-        const result = await imageUpload(task.imageFile, this.settings.contentSet, this)
+        const result = useWebdav
+          ? await imageUploadViaWebdav(task.imageFile, this)
+          : await imageUpload(task.imageFile, this.settings.contentSet, this)
         return { task, result }
       })
     )
@@ -696,13 +699,17 @@ export default class CustomImageAutoUploader extends Plugin {
       }
 
 
+      const useWebdav = this.settings.uploadMode === "webdav"
+
       for (const item of tasks) {
         let fileContent = await this.app.vault.read(item.file)
         let isModify = false
 
         const uploadResults = await Promise.all(
           item.uploadTasks.map(async (task) => {
-            const result = await imageUpload(task.imageFile, this.settings.contentSet, this)
+            const result = useWebdav
+              ? await imageUploadViaWebdav(task.imageFile, this)
+              : await imageUpload(task.imageFile, this.settings.contentSet, this)
             return { task, result }
           })
         )
