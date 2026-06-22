@@ -146,4 +146,21 @@ export default <LangMap>{
   "支持 {YYYYMM} 占位符，例如 Obsidian/{YYYYMM}，留空则上传到根目录": "Supports date placeholders: YYYY=year, MM=month, DD=day — combine freely inside {}, e.g. {YYYY-MM}, {YYYY_MM_DD}, {YYYYMM}. Leave empty to upload to root directory",
   "公共访问地址前缀": "Public URL prefix",
   "不需要末尾加 /，留空则将 /dav 替换为 /d（适用于 OpenList/AList）": "No trailing slash needed. Leave empty to auto-replace /dav with /d (for OpenList/AList)",
+
+  // Media Manager view
+  "媒体文件管理": "Media Manager",
+  "当前笔记": "Current Note",
+  "全库扫描": "Whole Vault",
+  "扫描": "Scan",
+  "正在扫描...": "Scanning...",
+  "未找到已上传媒体文件": "No uploaded media files found",
+  "同时删除远端文件": "Also delete from remote server",
+  "正在删除...": "Deleting...",
+  "MD 链接删除成功": "Link removed from note",
+  "远端文件删除成功": "Remote file deleted successfully",
+  "远端文件删除失败": "Remote file deletion failed",
+  "获取大小中...": "Loading size...",
+  "未配置上传域名，无法扫描": "No upload domain configured, cannot scan",
+  "请先打开一个 Markdown 笔记": "Please open a Markdown note first",
+  "跳转到笔记": "Go to note",
 };
