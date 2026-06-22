@@ -598,6 +598,22 @@ export async function generateVideoPoster(file: TFile, plugin: CustomImageAutoUp
  *   {YYYY}        → "2026"
  *   {MM-DD}       → "05-27"
  */
+/** Compute the WebDAV upload URL and public access URL for a given filename and config. */
+function computeWebdavTargetUrls(
+  fileName: string,
+  webdavUrl: string,
+  webdavCustomPath: string,
+  webdavPublicUrlPrefix: string
+): { uploadUrl: string; publicUrl: string } {
+  const resolvedPath = resolveCustomPath((webdavCustomPath ?? "").replace(/^\/+|\/+$/g, ""))
+  const base = webdavUrl.replace(/\/+$/, "")
+  const publicBase = webdavPublicUrlPrefix?.trim()
+    ? webdavPublicUrlPrefix.replace(/\/+$/, "")
+    : base.replace(/\/dav(?=\/|$)/, "/d")
+  const remotePath = resolvedPath ? `${resolvedPath}/${fileName}` : fileName
+  return { uploadUrl: `${base}/${remotePath}`, publicUrl: `${publicBase}/${remotePath}` }
+}
+
 function resolveCustomPath(customPath: string): string {
   const now = new Date()
   const yyyy = now.getFullYear().toString()
@@ -628,41 +644,37 @@ async function webdavUploadFile(
   webdavCustomPath: string,
   webdavPublicUrlPrefix: string,
   webdavUser: string,
-  webdavPassword: string
-): Promise<{ url: string } | { error: string }> {
-  // 解析路径占位符，去掉首尾 /
-  const resolvedPath = resolveCustomPath((webdavCustomPath ?? "").replace(/^\/+|\/+$/g, ""))
-  const base = webdavUrl.replace(/\/+$/, "")
-  // 公共访问地址前缀：优先使用用户配置，否则将 /dav → /d（OpenList/AList 惯例）
-  const publicBase = (webdavPublicUrlPrefix?.trim()
-    ? webdavPublicUrlPrefix.replace(/\/+$/, "")
-    : base.replace(/\/dav(?=\/|$)/, "/d"))
-
+  webdavPassword: string,
+  duplicateAction?: "overwrite" | "warn" | "reuse"
+): Promise<{ url: string } | { error: string } | { duplicate: true; url: string }> {
   // Basic Auth（支持 Unicode 用户名/密码）
   const basicAuth = `Basic ${btoa(unescape(encodeURIComponent(`${webdavUser}:${webdavPassword}`)))}`
 
-  // 逐段 MKCOL：依次创建每一级目录
-  // 201 = 目录创建成功；405 = 目录已存在；均视为正常，继续上传
+  const { uploadUrl, publicUrl } = computeWebdavTargetUrls(fileName, webdavUrl, webdavCustomPath, webdavPublicUrlPrefix)
+  const base = webdavUrl.replace(/\/+$/, "")
+
+  // 同名文件检查（非覆盖模式）
+  if (duplicateAction && duplicateAction !== "overwrite") {
+    try {
+      const headResp = await requestUrl({ url: uploadUrl, method: "HEAD", headers: { Authorization: basicAuth }, throw: false })
+      if (headResp.status === 200 || headResp.status === 204) {
+        if (duplicateAction === "warn") return { duplicate: true, url: publicUrl }
+        if (duplicateAction === "reuse") return { url: publicUrl }
+      }
+    } catch { /* ignore, proceed with upload */ }
+  }
+
+  // 逐段 MKCOL：依次创建每一级目录（201 = 创建成功；405 = 已存在；均继续）
+  const resolvedPath = resolveCustomPath((webdavCustomPath ?? "").replace(/^\/+|\/+$/g, ""))
   if (resolvedPath) {
     const segments = resolvedPath.split("/")
     for (let i = 1; i <= segments.length; i++) {
       const dirPath = segments.slice(0, i).join("/")
       try {
-        await requestUrl({
-          url: `${base}/${dirPath}`,
-          method: "MKCOL",
-          headers: { Authorization: basicAuth },
-          throw: false,
-        })
-      } catch {
-        // 网络异常时忽略，PUT 会给出更明确的错误
-      }
+        await requestUrl({ url: `${base}/${dirPath}`, method: "MKCOL", headers: { Authorization: basicAuth }, throw: false })
+      } catch { /* ignore */ }
     }
   }
-
-  const remotePath = resolvedPath ? `${resolvedPath}/${fileName}` : fileName
-  const uploadUrl = `${base}/${remotePath}`
-  const publicUrl = `${publicBase}/${remotePath}`
 
   // PUT：上传文件体
   let status: number
@@ -679,10 +691,7 @@ async function webdavUploadFile(
     return { error: $("网络错误,请检查网络是否通畅") + ": " + (e as Error).message }
   }
 
-  // 201 Created / 204 No Content / 200 OK 均视为成功
-  if (status === 200 || status === 201 || status === 204) {
-    return { url: publicUrl }
-  }
+  if (status === 200 || status === 201 || status === 204) return { url: publicUrl }
   return { error: `${$("WebDAV 上传失败")}: HTTP ${status}` }
 }
 
@@ -708,6 +717,7 @@ export async function imageUploadViaWebdav(file: TFile, plugin: CustomImageAutoU
   }
 
   const mimeType = `image/${file.extension}`
+  const duplicateAction = plugin.settings.duplicateWebdavAction ?? "overwrite"
   const result = await webdavUploadFile(
     body,
     file.name,
@@ -716,9 +726,13 @@ export async function imageUploadViaWebdav(file: TFile, plugin: CustomImageAutoU
     plugin.settings.webdavCustomPath ?? "",
     plugin.settings.webdavPublicUrlPrefix ?? "",
     plugin.settings.webdavUser ?? "",
-    plugin.settings.webdavPassword ?? ""
+    plugin.settings.webdavPassword ?? "",
+    duplicateAction
   )
 
+  if ("duplicate" in result) {
+    return { err: true, msg: $("同名文件已存在，已跳过上传") }
+  }
   if ("error" in result) {
     return { err: true, msg: result.error }
   }
@@ -769,6 +783,26 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
     const webdavPublicUrlPrefix = plugin.settings.webdavPublicUrlPrefix ?? ""
     const webdavUser = plugin.settings.webdavUser ?? ""
     const webdavPassword = plugin.settings.webdavPassword ?? ""
+    const duplicateAction = plugin.settings.duplicateWebdavAction ?? "overwrite"
+
+    // ── 同名文件检查（非覆盖模式）────────────────────────
+    if (duplicateAction !== "overwrite") {
+      const { uploadUrl: videoUploadUrl, publicUrl: videoPublicUrl } = computeWebdavTargetUrls(file.name, webdavUrl, webdavCustomPath, webdavPublicUrlPrefix)
+      const { publicUrl: posterPublicUrl } = computeWebdavTargetUrls(`${file.basename}_poster.jpg`, webdavUrl, webdavCustomPath, webdavPublicUrlPrefix)
+      const basicAuth = `Basic ${btoa(unescape(encodeURIComponent(`${webdavUser}:${webdavPassword}`)))}`
+      try {
+        const headResp = await requestUrl({ url: videoUploadUrl, method: "HEAD", headers: { Authorization: basicAuth }, throw: false })
+        if (headResp.status === 200 || headResp.status === 204) {
+          if (duplicateAction === "warn") {
+            return { err: true, msg: $("同名文件已存在，已跳过上传") }
+          }
+          if (duplicateAction === "reuse") {
+            if (plugin.settings.isDeleteSource) plugin.app.fileManager.trashFile(file)
+            return { err: false, msg: "success", videoUrl: videoPublicUrl, posterUrl: posterPublicUrl }
+          }
+        }
+      } catch { /* ignore, proceed with upload */ }
+    }
 
     // ── Step 1: 生成并上传 poster（WebDAV）──────────────
     let posterUrl = ""
@@ -782,7 +816,8 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
         webdavCustomPath,
         webdavPublicUrlPrefix,
         webdavUser,
-        webdavPassword
+        webdavPassword,
+        duplicateAction
       )
       if ("url" in posterResult) posterUrl = posterResult.url
       // poster 失败不阻断视频上传
@@ -804,7 +839,8 @@ export async function videoUpload(file: TFile, plugin: CustomImageAutoUploader):
       webdavCustomPath,
       webdavPublicUrlPrefix,
       webdavUser,
-      webdavPassword
+      webdavPassword,
+      duplicateAction
     )
     if ("error" in videoResult) {
       return { err: true, msg: videoResult.error }
@@ -1147,11 +1183,11 @@ export function publicUrlToWebdavUrl(
   return `${cleanBase}/${relPath}`
 }
 
-/** Send a WebDAV DELETE request for a single file. 404 is treated as success (already gone). */
+/** Send a WebDAV DELETE request for a single file. */
 export async function webdavDeleteRemoteFile(
   webdavFileUrl: string,
   basicAuth: string
-): Promise<{ ok: true } | { error: string }> {
+): Promise<{ ok: true } | { notFound: true } | { error: string }> {
   try {
     const resp = await requestUrl({
       url: webdavFileUrl,
@@ -1159,9 +1195,8 @@ export async function webdavDeleteRemoteFile(
       headers: { Authorization: basicAuth },
       throw: false,
     })
-    if (resp.status === 204 || resp.status === 200 || resp.status === 404) {
-      return { ok: true }
-    }
+    if (resp.status === 204 || resp.status === 200) return { ok: true }
+    if (resp.status === 404) return { notFound: true }
     return { error: `HTTP ${resp.status}` }
   } catch (e) {
     return { error: (e as Error).message }
@@ -1202,4 +1237,217 @@ export function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+// ── Remote WebDAV scan ────────────────────────────────────────────────────────
+
+export interface RemoteMediaFile {
+  href: string
+  webdavUrl: string
+  publicUrl: string
+  fileName: string
+  size: number
+  contentType: string
+  mediaType: "image" | "video"
+  referencedBy: string[]
+}
+
+const MEDIA_IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "avif", "bmp", "svg"])
+const MEDIA_VIDEO_EXTS = new Set(["mp4", "mov", "avi", "mkv", "webm", "m4v"])
+
+function mediaTypeFromEntry(contentType: string, fileName: string): "image" | "video" | "unknown" {
+  if (contentType.startsWith("image/")) return "image"
+  if (contentType.startsWith("video/")) return "video"
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? ""
+  if (MEDIA_IMAGE_EXTS.has(ext)) return "image"
+  if (MEDIA_VIDEO_EXTS.has(ext)) return "video"
+  return "unknown"
+}
+
+interface PropfindEntry {
+  href: string
+  isDir: boolean
+  size: number
+  contentType: string
+}
+
+function parsePropfindXml(xml: string): PropfindEntry[] {
+  const entries: PropfindEntry[] = []
+  const responseRe = /<[^>]*:?response\b[^>]*>([\s\S]*?)<\/[^>]*:?response>/gi
+  for (const block of xml.matchAll(responseRe)) {
+    const inner = block[1]
+    const hrefMatch = inner.match(/<[^>]*:?href[^>]*>([\s\S]*?)<\/[^>]*:?href>/i)
+    if (!hrefMatch) continue
+    const href = decodeURIComponent(hrefMatch[1].trim())
+    const isDir = /<[^>]*:?collection\b/i.test(inner)
+    const sizeMatch = inner.match(/<[^>]*:?getcontentlength[^>]*>(\d+)<\/[^>]*:?getcontentlength>/i)
+    const typeMatch = inner.match(/<[^>]*:?getcontenttype[^>]*>([^<]+)<\/[^>]*:?getcontenttype>/i)
+    entries.push({
+      href,
+      isDir,
+      size: sizeMatch ? parseInt(sizeMatch[1], 10) : 0,
+      contentType: typeMatch ? typeMatch[1].trim().split(";")[0].trim() : "",
+    })
+  }
+  return entries
+}
+
+async function propfindDir(
+  url: string,
+  basicAuth: string,
+  propfindBody: string,
+  depth: string
+): Promise<PropfindEntry[] | { error: string }> {
+  try {
+    const resp = await requestUrl({
+      url: url.endsWith("/") ? url : url + "/",
+      method: "PROPFIND",
+      headers: { Authorization: basicAuth, "Content-Type": "text/xml; charset=utf-8", Depth: depth },
+      body: propfindBody,
+      throw: false,
+    })
+    if (resp.status !== 207) return { error: `HTTP ${resp.status}` }
+    return parsePropfindXml(resp.text)
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+}
+
+async function scanDirRecursive(
+  dirUrl: string,
+  basicAuth: string,
+  propfindBody: string,
+  webdavBase: string,
+  publicBase: string,
+  results: RemoteMediaFile[],
+  depth: number
+): Promise<{ error: string } | null> {
+  if (depth <= 0) return null
+  const entries = await propfindDir(dirUrl, basicAuth, propfindBody, "1")
+  if ("error" in entries) return entries
+
+  const dirHref = new URL(dirUrl).pathname.replace(/\/?$/, "/")
+
+  for (const entry of entries) {
+    // skip the directory itself
+    const entryPath = entry.href.replace(/\/?$/, entry.isDir ? "/" : "")
+    if (entryPath === dirHref || entry.href === dirHref.replace(/\/$/, "")) continue
+
+    const fullUrl = new URL(entry.href, webdavBase + "/").href
+
+    if (entry.isDir) {
+      const sub = await scanDirRecursive(fullUrl, basicAuth, propfindBody, webdavBase, publicBase, results, depth - 1)
+      if (sub) return sub
+    } else {
+      const fileName = decodeURIComponent(entry.href.split("/").pop() ?? "")
+      const mt = mediaTypeFromEntry(entry.contentType, fileName)
+      if (mt === "unknown") continue
+
+      // Compute public URL: replace webdavBase path with publicBase path
+      const webdavBasePath = new URL(webdavBase).pathname.replace(/\/?$/, "")
+      const relPath = entry.href.startsWith(webdavBasePath)
+        ? entry.href.slice(webdavBasePath.length).replace(/^\//, "")
+        : decodeURIComponent(entry.href).replace(/^\//, "")
+      const publicUrl = `${publicBase}/${relPath}`
+
+      results.push({
+        href: entry.href,
+        webdavUrl: fullUrl,
+        publicUrl,
+        fileName,
+        size: entry.size,
+        contentType: entry.contentType,
+        mediaType: mt,
+        referencedBy: [],
+      })
+    }
+  }
+  return null
+}
+
+/**
+ * Scan the configured WebDAV server for all media files.
+ * Tries Depth: infinity first; falls back to recursive Depth: 1 if server rejects it.
+ */
+export async function scanRemoteWebdavFiles(
+  plugin: CustomImageAutoUploader,
+  basicAuth: string
+): Promise<RemoteMediaFile[] | { error: string }> {
+  const webdavBase = plugin.settings.webdavUrl?.trim()
+  if (!webdavBase) return { error: $("WebDAV 地址未配置") }
+
+  const cleanBase = webdavBase.replace(/\/+$/, "")
+  const publicBase = getEffectivePublicPrefix(plugin)
+
+  const propfindBody = `<?xml version="1.0" encoding="UTF-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:getcontentlength/><D:getcontenttype/><D:resourcetype/></D:prop></D:propfind>`
+
+  // Try Depth: infinity first
+  try {
+    const resp = await requestUrl({
+      url: cleanBase + "/",
+      method: "PROPFIND",
+      headers: { Authorization: basicAuth, "Content-Type": "text/xml; charset=utf-8", Depth: "infinity" },
+      body: propfindBody,
+      throw: false,
+    })
+    if (resp.status === 207) {
+      const entries = parsePropfindXml(resp.text)
+      const results: RemoteMediaFile[] = []
+      const webdavBasePath = new URL(cleanBase).pathname.replace(/\/?$/, "")
+      for (const entry of entries) {
+        if (entry.isDir) continue
+        const fileName = decodeURIComponent(entry.href.split("/").pop() ?? "")
+        const mt = mediaTypeFromEntry(entry.contentType, fileName)
+        if (mt === "unknown") continue
+        const relPath = entry.href.startsWith(webdavBasePath)
+          ? entry.href.slice(webdavBasePath.length).replace(/^\//, "")
+          : decodeURIComponent(entry.href).replace(/^\//, "")
+        results.push({
+          href: entry.href,
+          webdavUrl: new URL(entry.href, cleanBase + "/").href,
+          publicUrl: `${publicBase}/${relPath}`,
+          fileName,
+          size: entry.size,
+          contentType: entry.contentType,
+          mediaType: mt,
+          referencedBy: [],
+        })
+      }
+      return results
+    }
+    // Fall through to recursive scan if not 207
+  } catch { /* fall through */ }
+
+  // Recursive Depth: 1 fallback
+  const results: RemoteMediaFile[] = []
+  const err = await scanDirRecursive(cleanBase, basicAuth, propfindBody, cleanBase, publicBase, results, 10)
+  if (err) return err
+  return results
+}
+
+/**
+ * Scan the entire vault for uploaded media URLs and return a Map<url, notePaths[]>.
+ * Used to cross-reference remote files with local notes.
+ */
+export async function buildVaultMediaUrlIndex(
+  plugin: CustomImageAutoUploader
+): Promise<Map<string, string[]>> {
+  const { prefixes, domains } = getUploadedMediaConfig(plugin)
+  const index = new Map<string, string[]>()
+
+  const files = plugin.app.vault.getMarkdownFiles()
+  for (const file of files) {
+    const content = await plugin.app.vault.read(file)
+    const items = extractUploadedMediaItems(content, file, prefixes, domains)
+    for (const item of items) {
+      const addUrl = (u: string) => {
+        const list = index.get(u) ?? []
+        if (!list.includes(file.path)) list.push(file.path)
+        index.set(u, list)
+      }
+      addUrl(item.url)
+      if (item.posterUrl) addUrl(item.posterUrl)
+    }
+  }
+  return index
 }

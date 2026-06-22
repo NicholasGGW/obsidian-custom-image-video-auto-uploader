@@ -393,4 +393,209 @@ display: inline-flex;
   background: var(--background-modifier-error-hover, rgba(var(--color-red-rgb), 0.15));
 }
 
+/* ── Preview modal ── */
+.mm-preview-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mm-preview-modal {
+  position: relative;
+  background: var(--background-primary);
+  border-radius: var(--radius-m);
+  padding: 12px;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.mm-preview-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--background-modifier-border);
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 28px;
+  color: var(--text-normal);
+  z-index: 1;
+}
+
+.mm-preview-close:hover {
+  background: var(--background-modifier-hover);
+}
+
+.mm-preview-filename {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  padding-right: 36px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mm-preview-img {
+  max-width: 80vw;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: var(--radius-s);
+}
+
+.mm-preview-video {
+  max-width: 80vw;
+  max-height: 78vh;
+  border-radius: var(--radius-s);
+  outline: none;
+}
+
+/* ── Confirm dialog ── */
+.mm-confirm {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 10px 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.mm-confirm-title {
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  color: var(--text-normal);
+  margin-bottom: 4px;
+}
+
+.mm-confirm-desc {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.mm-confirm-notes {
+  max-height: 120px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.mm-confirm-note {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-accent);
+  padding: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mm-confirm-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.mm-confirm-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  cursor: pointer;
+  font-size: var(--font-ui-smaller);
+}
+
+.mm-confirm-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.mm-confirm-btn--danger {
+  background: var(--background-modifier-error, rgba(var(--color-red-rgb), 0.1));
+  color: var(--color-red);
+  border-color: var(--color-red);
+}
+
+.mm-confirm-btn--danger:hover {
+  background: var(--background-modifier-error-hover, rgba(var(--color-red-rgb), 0.2));
+}
+
+/* ── Status badges ── */
+.mm-notfound-badge {
+  font-size: var(--font-ui-smaller);
+  color: var(--color-orange, #e8a029);
+}
+
+.mm-multiref-badge {
+  font-size: var(--font-ui-smaller);
+  color: var(--color-orange, #e8a029);
+}
+
+/* ── Remote scan panel ── */
+.mm-remote-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 4px;
+}
+
+.mm-remote-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mm-remote-section {
+  margin-bottom: 8px;
+}
+
+.mm-remote-section-header {
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  background: var(--background-secondary);
+  border-radius: var(--radius-s);
+  margin-bottom: 2px;
+}
+
+.mm-remote-section-header--unref {
+  color: var(--color-orange, #e8a029);
+}
+
+.mm-ref-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.mm-ref-badge {
+  font-size: 10px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mm-unref-badge {
+  font-size: var(--font-ui-smaller);
+  color: var(--color-orange, #e8a029);
+  margin-top: 2px;
+}
+
 /*# sourceMappingURL=styles.css.map */

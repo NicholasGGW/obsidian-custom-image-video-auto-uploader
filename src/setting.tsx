@@ -73,6 +73,8 @@ export interface PluginSettings {
   propertyNeedSets: Array<UploadSet>
   // 视频上传最大大小限制 (MB)
   maxVideoSizeMB: number
+  // WebDAV 同名文件处理方式："overwrite" 覆盖 | "warn" 跳过并提示 | "reuse" 复用已有链接
+  duplicateWebdavAction: "overwrite" | "warn" | "reuse"
 }
 
 // 默认插件设置
@@ -122,6 +124,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   ],
   // 视频最大上传大小，默认 50 MB
   maxVideoSizeMB: 50,
+  // WebDAV 同名文件处理方式
+  duplicateWebdavAction: "overwrite" as "overwrite" | "warn" | "reuse",
 }
 
 export class SettingTab extends PluginSettingTab {
@@ -348,6 +352,21 @@ export class SettingTab extends PluginSettingTab {
             .setValue(this.plugin.settings.webdavPublicUrlPrefix ?? "")
             .onChange(async (value) => {
               this.plugin.settings.webdavPublicUrlPrefix = value
+              await this.plugin.saveSettings()
+            })
+        )
+
+      new Setting(set)
+        .setName($("重复文件处理"))
+        .setDesc($("上传时发现 WebDAV 上已存在同名文件的处理方式"))
+        .addDropdown((drop) =>
+          drop
+            .addOption("overwrite", $("覆盖上传"))
+            .addOption("warn", $("跳过并提示（不替换链接/不删除本地）"))
+            .addOption("reuse", $("复用已有链接（替换链接/删除本地）"))
+            .setValue(this.plugin.settings.duplicateWebdavAction ?? "overwrite")
+            .onChange(async (value) => {
+              this.plugin.settings.duplicateWebdavAction = value as "overwrite" | "warn" | "reuse"
               await this.plugin.saveSettings()
             })
         )
